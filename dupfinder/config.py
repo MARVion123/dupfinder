@@ -73,7 +73,16 @@ DEFAULTS = {
     # start to differ past this point are reported as similar. That affects the
     # similarity column alone - exact duplicates go through the full MD5 and a
     # byte-for-byte comparison, and are unaffected. 0 = read the whole file.
-    "fuzzy_max_bytes": 16777216,   # 16 MiB
+    # 4 MiB. Measured on ten films present twice with different containers:
+    # every pair is still found at 1 MiB, because a remux shares its payload
+    # from just past the header onward. 4 MiB leaves room for fatter headers
+    # and is still four times cheaper than 16. Halve it to halve the time.
+    "fuzzy_max_bytes": 4194304,
+    # An escape hatch, empty by default. Extensions listed here skip the fuzzy
+    # pass entirely - worth setting to the video extensions if you have
+    # thousands of films and do not care about finding the same one in two
+    # containers. Exact duplicates are unaffected either way.
+    "fuzzy_skip_exts": [],
     "fuzzy_bucket_cap": 600,       # max files compared pairwise inside one bucket
     "image_similarity": True,      # perceptual hash for images (needs Pillow)
     # --- deletion ---

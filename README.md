@@ -200,7 +200,8 @@ The defaults that matter:
 | `verify_bytes` | `true` | Byte-for-byte proof of every match. |
 | `near_duplicates` | `true` | The fuzzy pass. Turn off for a pure exact-duplicate scan. |
 | `near_threshold` | `70` | Similarity cutoff for reporting a near pair. |
-| `fuzzy_max_bytes` | `16777216` | Bytes read per file for the fuzzy hash; `0` reads every file in full. CTPH is pure Python at ~2.5 MiB/s, so this is what decides whether a scan over films finishes in minutes or hours. The trade is that two files which only start to differ past this point are reported as similar — the similarity column only. Exact duplicates go through the full MD5 plus a byte-for-byte comparison and are unaffected. |
+| `fuzzy_max_bytes` | `4194304` | Bytes read per file for the fuzzy hash; `0` reads every file in full. CTPH is pure Python at ~2.5 MiB/s, so this single number decides whether a scan over films takes minutes or hours. Measured on ten films present twice in different containers: every pair is still found at 1 MiB, because a remux shares its payload from just past the header onward. Halve it to halve the time. Exact duplicates go through the full MD5 plus a byte-for-byte comparison and are unaffected. |
+| `fuzzy_skip_exts` | *empty* | Extensions that skip the fuzzy pass entirely. Worth filling in with your video extensions if you have thousands of films and do not care about finding the same one in two containers. |
 | `delete_mode` | `quarantine` | `quarantine` \| `recycle` \| `permanent`. |
 | `protect_last_copy` | `true` | Refuse any selection that would empty a group. |
 | `dry_run` | `false` | Rehearsal mode. Every check runs and the log fills up, but no file is touched. Toggled from the action bar with *Simulate only*, and it sticks. |
@@ -252,6 +253,11 @@ Without it, images are still compared by fuzzy content hash; with it, resized
 and re-encoded copies of the same photo are matched too. Pillow also supplies
 the previews and the EXIF line described below.
 
+With Pillow present, images skip the CTPH hash entirely and use only the
+perceptual one. Measured on the same picture saved at two JPEG qualities: CTPH
+scores **0%** where the perceptual hash scores **100%**, and CTPH costs 24×
+more. Paying for both was paying for nothing.
+
 ### Previews and file details
 
 Expanding a group shows a thumbnail of every image in it, next to the
@@ -290,7 +296,7 @@ touches nothing outside a temp directory.
 cd tests/ui
 npm install
 npx playwright install chromium
-npm test                 # 33 checks; screenshots land in tests/ui/screenshots/
+npm test                 # 34 checks; screenshots land in tests/ui/screenshots/
 ```
 
 It fails the run on any uncaught JS exception, `console.error`, or HTTP 4xx/5xx

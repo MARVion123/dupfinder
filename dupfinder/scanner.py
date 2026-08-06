@@ -471,6 +471,54 @@ class ScanEngine:
         return result
 
     # ---- phase 6: fuzzy / near duplicates ---------------------------
+    def _pick_fuzzy_candidates(self, rows, redundant, want_images, unlimited,
+                               max_size, max_bytes):
+        """Decide, per file, whether to spend a read on it.
+
+        Returns (row, is_image, wants_ctph) triples. Three rules, each of which
+        exists because the pass was otherwise paying for nothing:
+
+        1. An image with Pillow present gets the perceptual hash and *not* the
+           CTPH one. Measured on the same picture saved at two JPEG qualities:
+           CTPH scores 0%, the perceptual hash 100%, and CTPH costs 24x more.
+        2. Extensions in fuzzy_skip_exts are left to the exact passes.
+        3. With a byte budget in force every large file ends up with the same
+           CTPH block size, so the block size no longer separates a 20 MB file
+           from a 4 GB one. Bucket by size instead, and skip anything with no
+           possible partner within a 4x size window.
+        """
+        skip_exts = {str(e).lower() for e in self.config["fuzzy_skip_exts"]}
+        picked = []
+        for row in rows:
+            if row["id"] in redundant:
+                continue
+            ext = (row["ext"] or "").lower()
+            is_image = want_images and ext in hashing.IMAGE_EXTS
+            wants_ctph = (not is_image and ext not in skip_exts
+                          and (unlimited or row["size"] <= max_size))
+            if is_image or wants_ctph:
+                picked.append((row, is_image, wants_ctph))
+
+        if max_bytes <= 0:
+            return picked
+
+        bands: dict[int, int] = defaultdict(int)
+        for row, _img, wants_ctph in picked:
+            if wants_ctph:
+                bands[int(row["size"]).bit_length()] += 1
+
+        out = []
+        for row, is_image, wants_ctph in picked:
+            if wants_ctph:
+                band = int(row["size"]).bit_length()
+                # Counts include this file, so "< 2" means nothing else is
+                # anywhere near its size.
+                if bands[band] + bands[band - 1] + bands[band + 1] < 2:
+                    wants_ctph = False
+            if is_image or wants_ctph:
+                out.append((row, is_image, wants_ctph))
+        return out
+
     def _fuzzy_pass(self, scan_id, exact, opts):
         threshold = int(opts.get("near_threshold") or 70)
         min_size = max(int(self.config["fuzzy_min_size"]), hashing.MIN_BLOCKSIZE * 64)
@@ -492,25 +540,20 @@ class ScanEngine:
             "WHERE scan_id=? AND size>=? ORDER BY size",
             (scan_id, min_size),
         )
-        candidates = [
-            r for r in rows
-            if r["id"] not in redundant
-            and (unlimited or r["size"] <= max_size
-                 or (want_images and r["ext"] in hashing.IMAGE_EXTS))
-        ]
+        candidates = self._pick_fuzzy_candidates(
+            rows, redundant, want_images, unlimited, max_size, max_bytes)
         self._phase("fuzzy", len(candidates))
         if len(candidates) < 2:
             return []
 
         info = {}
         updates = []
-        for row in candidates:
+        for row, is_image, wants_ctph in candidates:
             self._abort_if_cancelled()
             self._set(current=row["path"])
             cached = self.db.cache_get(row["path"], row["size"], row["mtime"])
             fz = cached["fuzzy"] if cached else None
             dh = cached["dhash"] if cached else None
-            is_image = want_images and row["ext"] in hashing.IMAGE_EXTS
 
             # A signature cached under a larger byte budget carries a larger
             # block size and would never bucket with freshly hashed files.
@@ -519,12 +562,14 @@ class ScanEngine:
                        > hashing.fuzzy_blocksize_for(row["size"], max_bytes)):
                 fz = None
 
-            if fz is None and (unlimited or row["size"] <= max_size):
+            if wants_ctph and fz is None:
                 try:
                     fz = hashing.fuzzy_hash(row["path"], row["size"],
                                             self._cancel, max_bytes)
                 except OSError:
                     fz = None
+            elif not wants_ctph:
+                fz = None
             if is_image and dh is None:
                 dh = hashing.image_dhash(row["path"])
             if fz or dh:
