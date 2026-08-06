@@ -44,6 +44,11 @@ moment** with partial results kept, and can be **run again** — a persistent ha
 cache keyed on path+size+mtime means a re-run only pays for what actually
 changed.
 
+**Results appear while the scan runs.** Exact groups are published the moment
+pass 5 proves them, complete with suggestions, rather than at the very end.
+The near-duplicate pass that follows is the slow one, and there is no reason to
+stare at an empty table while it works. The UI refreshes every three seconds.
+
 **Sortable results.** Every column sorts (similarity, copies, file size,
 reclaimable bytes, folders spanned, suggestion confidence), with filters for
 type, minimum similarity, minimum file size, and a path search.
