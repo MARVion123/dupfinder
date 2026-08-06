@@ -44,6 +44,21 @@ class ApiError(Exception):
         self.message = message
 
 
+class Raw:
+    """A response that is not JSON - currently only image previews.
+
+    Endpoints normally return a dict that the handler encodes; returning one of
+    these instead hands the bytes and content type straight through.
+    """
+
+    __slots__ = ("body", "ctype", "headers")
+
+    def __init__(self, body: bytes, ctype: str, headers: dict | None = None):
+        self.body = body
+        self.ctype = ctype
+        self.headers = headers or {}
+
+
 class App:
     """Holds the shared state; the handler class is a thin shell around it."""
 
@@ -85,6 +100,8 @@ class App:
                 return self.ai.status()
             if path == "/api/actions":
                 return self.api_actions(query)
+            if path == "/api/thumb":
+                return self.api_thumb(query)
             m = re.fullmatch(r"/api/group/(\d+)", path)
             if m:
                 return self.api_group(int(m.group(1)))
@@ -248,7 +265,7 @@ class App:
         if not row:
             raise ApiError("Unknown group", 404)
         group = dict(row)
-        group["files"] = self._members(group_id)
+        group["files"] = self._members(group_id, with_meta=True)
         sugg = self.db.one("SELECT * FROM suggestions WHERE group_id=?", (group_id,))
         group["suggestion"] = dict(sugg) if sugg else None
         if group["suggestion"]:
@@ -259,10 +276,13 @@ class App:
                 group["suggestion"]["verdicts"] = {}
         return group
 
-    def _members(self, group_id):
+    def _members(self, group_id, with_meta=False):
+        """Files in a group. `with_meta` opens each image to read its EXIF, so
+        it is only ever set for a single expanded group, never for a page of
+        results."""
         rows = self.db.query(
-            """SELECT f.id, f.path, f.parent, f.name, f.size, f.mtime, f.status,
-                      f.md5, m.similarity
+            """SELECT f.id, f.path, f.parent, f.name, f.ext, f.size, f.mtime,
+                      f.status, f.md5, m.similarity
                FROM group_members m JOIN files f ON f.id = m.file_id
                WHERE m.group_id = ? ORDER BY f.size DESC, f.path ASC""",
             (group_id,),
@@ -281,6 +301,9 @@ class App:
             verdict = verdicts.get(str(row["id"]))
             item["action"] = (verdict or {}).get("action")
             item["reason"] = (verdict or {}).get("reason")
+            item["is_image"] = (row["ext"] or "").lower() in hashing.IMAGE_EXTS
+            if with_meta and item["is_image"] and row["status"] == "present":
+                item["meta"] = hashing.image_meta(row["path"])
             out.append(item)
         return out
 
@@ -313,7 +336,33 @@ class App:
         if not body.get("confirm"):
             raise ApiError("Deletion must be confirmed")
         mode = body.get("mode") or self.config["delete_mode"]
-        return self.actions.delete_files(file_ids, mode)
+        # An absent flag falls back to the stored setting, so a client that
+        # does not know about simulation cannot accidentally switch it off.
+        dry_run = body.get("dry_run")
+        if dry_run is None:
+            dry_run = self.config["dry_run"]
+        return self.actions.delete_files(file_ids, mode, dry_run=bool(dry_run))
+
+    def api_thumb(self, query):
+        raw = (query.get("file_id") or [""])[0]
+        try:
+            file_id = int(raw)
+        except ValueError:
+            raise ApiError("Bad file_id")
+        row = self.db.one("SELECT path, ext FROM files WHERE id=?", (file_id,))
+        if not row:
+            raise ApiError("Unknown file", 404)
+        if (row["ext"] or "").lower() not in hashing.IMAGE_EXTS:
+            raise ApiError("Not an image", 404)
+        # The id comes from our own database, but it still names a path, so it
+        # goes through the same allowlist as everything else.
+        path = check_allowed(row["path"], self.config["roots_allowlist"])
+        data = hashing.image_thumbnail(path)
+        if not data:
+            raise ApiError("No preview available", 404)
+        # Content is immutable for the lifetime of a scan and the URL pins the
+        # file id, so the browser may keep it. Private: it is someone's photo.
+        return Raw(data, "image/jpeg", {"Cache-Control": "private, max-age=3600"})
 
     def api_actions(self, query):
         scan_id = self._latest_scan_id(query)
@@ -411,6 +460,9 @@ def make_handler(app: App):
                     return self._send(401, {"error": "Authentication required"})
                 body = self._read_body() if method == "POST" else None
                 result = app.handle(method, path, query, body)
+                if isinstance(result, Raw):
+                    return self._send(200, body=result.body, ctype=result.ctype,
+                                      extra_headers=result.headers)
                 self._send(200, result)
             except ApiError as exc:
                 self._send(exc.status, {"error": exc.message})

@@ -203,6 +203,7 @@ The defaults that matter:
 | `fuzzy_max_bytes` | `16777216` | Bytes read per file for the fuzzy hash; `0` reads every file in full. CTPH is pure Python at ~2.5 MiB/s, so this is what decides whether a scan over films finishes in minutes or hours. The trade is that two files which only start to differ past this point are reported as similar — the similarity column only. Exact duplicates go through the full MD5 plus a byte-for-byte comparison and are unaffected. |
 | `delete_mode` | `quarantine` | `quarantine` \| `recycle` \| `permanent`. |
 | `protect_last_copy` | `true` | Refuse any selection that would empty a group. |
+| `dry_run` | `false` | Rehearsal mode. Every check runs and the log fills up, but no file is touched. Toggled from the action bar with *Simulate only*, and it sticks. |
 | `ai_model` | `claude-opus-5` | |
 | `ai_effort` | `high` | `low` … `max`. |
 | `anthropic_api_key` | *empty* | Falls back to `ANTHROPIC_API_KEY`. Never sent to the browser. |
@@ -248,7 +249,32 @@ python3 -m pip install Pillow
 ```
 
 Without it, images are still compared by fuzzy content hash; with it, resized
-and re-encoded copies of the same photo are matched too.
+and re-encoded copies of the same photo are matched too. Pillow also supplies
+the previews and the EXIF line described below.
+
+### Previews and file details
+
+Expanding a group shows a thumbnail of every image in it, next to the
+dimensions, the EXIF capture date and the camera that took it — the things you
+actually need to tell two similar photos apart. Previews are generated on
+demand by `/api/thumb`, honour the EXIF orientation flag, and go through the
+same path allowlist as everything else. A file whose preview cannot be
+rendered simply shows no thumbnail.
+
+Reading EXIF means opening the file, so it happens once per group when you
+expand it, never while listing results.
+
+### Rehearsing a deletion
+
+Tick **Simulate only** in the action bar. The button turns into *Simulate
+deletion*, and pressing it runs the whole thing — allowlist check, last-copy
+protection, destination arithmetic — and stops just short of the filesystem
+call. The action log fills with entries marked `simulated`, which carry no
+Restore button because nothing ever moved.
+
+It is the same code path as a real deletion, not a separate one, so what it
+reports is what a real run would do. The setting is stored in `config.json`, so
+it survives a reload: leave it on until you trust the suggestions.
 
 ---
 
@@ -264,7 +290,7 @@ touches nothing outside a temp directory.
 cd tests/ui
 npm install
 npx playwright install chromium
-npm test                 # 26 checks; screenshots land in tests/ui/screenshots/
+npm test                 # 33 checks; screenshots land in tests/ui/screenshots/
 ```
 
 It fails the run on any uncaught JS exception, `console.error`, or HTTP 4xx/5xx

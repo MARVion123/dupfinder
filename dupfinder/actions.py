@@ -14,6 +14,10 @@ from .safety import check_allowed, UnsafePath
 
 TRASH_DIRNAME = ".dupfinder-trash"
 
+# Marks a log entry as a rehearsal. Nothing with this prefix ever moved a file,
+# so nothing with this prefix may be offered for restore.
+SIMULATED_PREFIX = "simulate:"
+
 
 def _unique(path: str) -> str:
     if not os.path.exists(path):
@@ -66,14 +70,21 @@ class ActionRunner:
 
     # -- deletion --------------------------------------------------------
     def delete_files(self, file_ids: list[int], mode: str | None = None,
-                     scan_id: int | None = None) -> dict:
+                     scan_id: int | None = None, dry_run: bool = False) -> dict:
+        """Remove the given files, or work out what would happen (`dry_run`).
+
+        A dry run walks exactly the same path - the same allowlist check, the
+        same last-copy protection, the same destination arithmetic - and stops
+        just short of the filesystem call. It is the rehearsal, not a separate
+        code path, so what it reports is what a real run would do.
+        """
         mode = mode or self.config["delete_mode"]
         if mode not in ("quarantine", "recycle", "permanent"):
             raise ValueError("Unknown delete mode: %s" % mode)
         roots = self.config["roots_allowlist"]
 
         results = {"deleted": [], "skipped": [], "failed": [],
-                   "freed_bytes": 0, "mode": mode}
+                   "freed_bytes": 0, "mode": mode, "dry_run": bool(dry_run)}
         if not file_ids:
             return results
 
@@ -113,25 +124,31 @@ class ActionRunner:
                 continue
 
             try:
-                dst = self._perform(resolved, mode, row, roots)
+                dst = self._target(resolved, mode, row, roots)
+                if not dry_run:
+                    dst = self._move(resolved, mode, dst)
             except Exception as exc:  # noqa: BLE001
-                self._log(row, mode, resolved, None, False, str(exc))
+                self._log(row, mode, resolved, None, False, str(exc), dry_run)
                 results["failed"].append(
                     {"file_id": fid, "path": path, "message": str(exc)})
                 continue
 
-            status = "deleted" if mode == "permanent" else "quarantined"
-            self.db.execute("UPDATE files SET status=? WHERE id=?", (status, fid))
-            self.db.cache_invalidate(resolved)
-            self._log(row, mode, resolved, dst, True, None)
+            if dry_run:
+                self._log(row, mode, resolved, dst, True,
+                          "Simulated - nothing was moved", True)
+            else:
+                status = "deleted" if mode == "permanent" else "quarantined"
+                self.db.execute("UPDATE files SET status=? WHERE id=?", (status, fid))
+                self.db.cache_invalidate(resolved)
+                self._log(row, mode, resolved, dst, True, None)
             results["deleted"].append({"file_id": fid, "path": path, "moved_to": dst})
             results["freed_bytes"] += size or 0
 
         return results
 
-    def _perform(self, path, mode, row, roots) -> str | None:
+    def _target(self, path, mode, row, roots) -> str | None:
+        """Where this file would go. Touches nothing."""
         if mode == "permanent":
-            os.remove(path)
             return None
         if mode == "recycle":
             dst = _recycle_target(path, roots)
@@ -139,10 +156,15 @@ class ActionRunner:
                 raise RuntimeError(
                     "No #recycle folder for this share - enable the DSM recycle bin "
                     "or use quarantine mode")
-        else:
-            scan = self.db.one("SELECT root FROM scans WHERE id=?", (row["scan_id"],))
-            scan_root = scan["root"] if scan else os.path.dirname(path)
-            dst = _quarantine_target(path, scan_root, row["scan_id"] or 0)
+            return dst
+        scan = self.db.one("SELECT root FROM scans WHERE id=?", (row["scan_id"],))
+        scan_root = scan["root"] if scan else os.path.dirname(path)
+        return _quarantine_target(path, scan_root, row["scan_id"] or 0)
+
+    def _move(self, path, mode, dst) -> str | None:
+        if mode == "permanent":
+            os.remove(path)
+            return None
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         dst = _unique(dst)
         shutil.move(path, dst)
@@ -176,7 +198,11 @@ class ActionRunner:
                 "Kept: deleting it would remove the last copy in group #%d" % gid)
         return blocked
 
-    def _log(self, row, action, src, dst, ok, message):
+    def _log(self, row, action, src, dst, ok, message, dry_run=False):
+        # Simulated entries carry a prefix so they can never be mistaken for
+        # something that happened - not by restore(), not by the log in the UI.
+        if dry_run:
+            action = SIMULATED_PREFIX + action
         self.db.execute(
             """INSERT INTO actions(scan_id,file_id,action,src_path,dst_path,size,
                    ok,message,created_at)
@@ -192,8 +218,8 @@ class ActionRunner:
             return results
         marks = ",".join("?" * len(action_ids))
         rows = self.db.query(
-            "SELECT * FROM actions WHERE id IN (%s) AND ok=1 AND dst_path IS NOT NULL"
-            % marks,
+            "SELECT * FROM actions WHERE id IN (%s) AND ok=1 AND dst_path IS NOT NULL "
+            "AND action NOT LIKE '%s%%'" % (marks, SIMULATED_PREFIX),
             tuple(action_ids),
         )
         for row in rows:

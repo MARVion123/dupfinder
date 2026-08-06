@@ -11,7 +11,9 @@
     total: 0,
     groups: [],
     open: {},                 // group id -> true
+    detail: {},               // group id -> files enriched with image metadata
     selected: {},             // file id -> {size, path}
+    dryRun: false,
     token: localStorage.getItem("dupfinder_token") || "",
     scanRunning: false,
     lastRoot: null,
@@ -196,6 +198,10 @@
 
   function loadGroups(quiet) {
     state.__lastLoad = Date.now();
+    // The cached detail carries file statuses, which a delete has just made
+    // stale. The quiet refresh during a running scan keeps it: nothing is
+    // being deleted then, and dropping it would re-read EXIF every 6 seconds.
+    if (!quiet) state.detail = {};
     return api("/api/groups?" + query()).then(function (data) {
       state.groups = data.groups || [];
       state.total = data.total || 0;
@@ -261,23 +267,53 @@
     renderActionBar();
   }
 
+  // The preview is a plain <img>, so the browser fetches it itself and the
+  // Authorization header we use for the JSON calls is not available. The
+  // server accepts the token in the query string for exactly this case.
+  function thumbUrl(fid) {
+    return "/api/thumb?file_id=" + fid +
+      (state.token ? "&token=" + encodeURIComponent(state.token) : "");
+  }
+
+  function metaLine(f) {
+    var m = f.meta;
+    if (!m) return "";
+    var bits = [];
+    if (m.width && m.height) bits.push(m.width + " × " + m.height);
+    if (m.taken) bits.push("taken " + esc(m.taken));
+    if (m.camera) bits.push(esc(m.camera));
+    if (m.format) bits.push(esc(m.format));
+    return bits.length ? '<div class="fmeta">' + bits.join(" · ") + "</div>" : "";
+  }
+
   function detailRow(g) {
     var tr = document.createElement("tr");
     tr.className = "detail";
-    var rows = (g.files || []).map(function (f) {
+    // Metadata arrives from /api/group/<id> a moment after the row opens;
+    // until then the list we already have is rendered, so nothing flickers
+    // into existence except the extra detail.
+    var files = state.detail[g.id] || g.files || [];
+    var rows = files.map(function (f) {
       var parts = splitPath(f.path);
       var gone = f.status !== "present";
       var tag = f.action
         ? '<span class="tag ' + f.action + '">' + f.action + "</span>"
         : "";
+      var thumb = f.is_image && !gone
+        ? '<img class="thumb" loading="lazy" alt="" src="' + thumbUrl(f.id) + '"' +
+          ' onerror="this.classList.add(\'broken\')">'
+        : "";
       return "<tr>" +
         '<td style="width:28px"><input type="checkbox" class="pick-file" data-fid=' + f.id +
           ' data-size=' + f.size + ' data-path="' + esc(f.path) + '"' +
           (state.selected[f.id] ? " checked" : "") + (gone ? " disabled" : "") + "></td>" +
-        '<td class="fpath' + (gone ? " gone" : "") + '"><span class="fdir">' + esc(parts[0]) +
+        '<td class="fpath' + (gone ? " gone" : "") + '"><div class="fwrap">' + thumb +
+          '<div class="ftext"><span class="fdir">' + esc(parts[0]) +
           '</span><span class="fname">' + esc(parts[1]) + "</span>" +
+          metaLine(f) +
           (f.reason ? '<div class="reason">' + esc(f.reason) + "</div>" : "") +
-          (gone ? '<div class="reason">' + esc(f.status) + "</div>" : "") + "</td>" +
+          (gone ? '<div class="reason">' + esc(f.status) + "</div>" : "") +
+          "</div></div></td>" +
         '<td class="num">' + (f.similarity >= 99.5 ? "100%" : f.similarity.toFixed(0) + "%") + "</td>" +
         '<td class="num">' + fmtBytes(f.size) + "</td>" +
         '<td class="num muted">' + esc(fmtDate(f.mtime)) + "</td>" +
@@ -295,6 +331,16 @@
         '<button class="ghost small act-suggest-one" data-gid=' + g.id + '>Ask Claude about this group</button>' +
       "</div></div></td>";
     return tr;
+  }
+
+  // Reading EXIF means opening every image in the group, so it happens once
+  // per group on expand rather than for every row of every results page.
+  function loadDetail(gid) {
+    if (state.detail[gid]) return;
+    api("/api/group/" + gid).then(function (d) {
+      state.detail[gid] = d.files || [];
+      if (state.open[gid]) renderGrid();
+    }).catch(function () { /* the row is already usable without the extras */ });
   }
 
   // ---------------------------------------------------------------- selection
@@ -317,6 +363,17 @@
     $("actionBar").classList.toggle("hidden", ids.length === 0);
     $("selCount").textContent = ids.length + (ids.length === 1 ? " file" : " files");
     $("selBytes").textContent = fmtBytes(bytes);
+    renderDeleteButton();
+  }
+
+  // The button has to say which of the two things it does. A red "Delete
+  // selected" that quietly only pretends is the worst of both worlds.
+  function renderDeleteButton() {
+    var b = $("btnDelete");
+    b.textContent = state.dryRun ? "Simulate deletion" : "Delete selected";
+    b.classList.toggle("danger", !state.dryRun);
+    b.classList.toggle("primary", state.dryRun);
+    $("actionBar").classList.toggle("simulating", state.dryRun);
   }
 
   // ---------------------------------------------------------------- events
@@ -371,6 +428,7 @@
       if (row) {
         var gid = row.dataset.gid;
         state.open[gid] = !state.open[gid];
+        if (state.open[gid]) loadDetail(gid);
         renderGrid();
       }
     });
@@ -404,7 +462,7 @@
     });
     $("fScan").addEventListener("change", function () {
       state.scanId = Number(this.value) || null;
-      state.offset = 0; state.open = {}; state.selected = {};
+      state.offset = 0; state.open = {}; state.detail = {}; state.selected = {};
       loadGroups();
     });
 
@@ -419,6 +477,15 @@
       state.selected = {}; renderGrid();
     });
 
+    $("optDryRun").addEventListener("change", function () {
+      state.dryRun = this.checked;
+      renderDeleteButton();
+      // Persist it: this is a safety setting, and one that silently reset on
+      // reload would be worse than not having it.
+      api("/api/config", { method: "POST", body: { dry_run: state.dryRun } })
+        .catch(fail);
+    });
+
     $("btnDelete").addEventListener("click", function () {
       var ids = Object.keys(state.selected).map(Number);
       if (!ids.length) return;
@@ -428,21 +495,29 @@
         recycle: "moved into the DSM recycle bin of their share",
         permanent: "deleted permanently and cannot be recovered"
       }[mode];
-      confirmThen(
-        "Delete " + ids.length + " file" + (ids.length === 1 ? "" : "s") + "?",
-        "They will be " + wording + ".",
-        function () {
-          api("/api/delete", { method: "POST", body: {
-            file_ids: ids, mode: mode, confirm: true } })
-            .then(function (r) {
-              var msg = r.deleted.length + " removed, " + fmtBytes(r.freed_bytes) + " freed";
-              if (r.skipped.length) msg += " · " + r.skipped.length + " kept for safety";
-              if (r.failed.length) msg += " · " + r.failed.length + " failed";
-              toast(msg, r.failed.length > 0);
-              state.selected = {};
-              loadGroups();
-            }).catch(fail);
-        });
+      var n = ids.length + " file" + (ids.length === 1 ? "" : "s");
+      var ask = state.dryRun
+        ? ["Simulate deleting " + n + "?",
+           "Nothing will be touched. Every check runs and the log records what " +
+           "a real run in " + mode + " mode would have done."]
+        : ["Delete " + n + "?", "They will be " + wording + "."];
+      confirmThen(ask[0], ask[1], function () {
+        api("/api/delete", { method: "POST", body: {
+          file_ids: ids, mode: mode, confirm: true, dry_run: state.dryRun } })
+          .then(function (r) {
+            var msg = r.dry_run
+              ? "Simulated: " + r.deleted.length + " would be removed, " +
+                fmtBytes(r.freed_bytes) + " would be freed"
+              : r.deleted.length + " removed, " + fmtBytes(r.freed_bytes) + " freed";
+            if (r.skipped.length) msg += " · " + r.skipped.length + " kept for safety";
+            if (r.failed.length) msg += " · " + r.failed.length + " failed";
+            toast(msg, r.failed.length > 0);
+            // A simulation changed nothing, so the selection stays put - the
+            // point is to look at the log and then decide.
+            if (!r.dry_run) state.selected = {};
+            loadGroups();
+          }).catch(fail);
+      });
     });
 
     $("btnCancel").addEventListener("click", function () {
@@ -627,10 +702,16 @@
       }
       (data.actions || []).forEach(function (a) {
         var tr = document.createElement("tr");
-        var restorable = a.ok && a.dst_path && a.action !== "restore";
+        // A simulated entry has a destination recorded but nothing ever moved
+        // there, so it must never offer a Restore button.
+        var simulated = String(a.action).indexOf("simulate:") === 0;
+        var restorable = a.ok && a.dst_path && a.action !== "restore" && !simulated;
+        if (simulated) tr.className = "simulated";
         tr.innerHTML =
           "<td>" + esc(fmtDate(a.created_at)) + "</td>" +
-          "<td>" + esc(a.action) + "</td>" +
+          "<td>" + (simulated
+            ? '<span class="tag sim">simulated</span> ' + esc(String(a.action).slice(9))
+            : esc(a.action)) + "</td>" +
           '<td class="fpath">' + esc(a.src_path) + "</td>" +
           '<td class="num">' + fmtBytes(a.size) + "</td>" +
           "<td>" + (a.ok ? "✔" : '<span style="color:var(--danger)">✕ ' + esc(a.message || "") + "</span>") + "</td>" +
@@ -673,7 +754,12 @@
       var cb = confirmCallback; confirmCallback = null; closeModals();
       if (cb) cb();
     });
-    api("/api/config").then(function (c) { $("delMode").value = c.delete_mode; }).catch(function () {});
+    api("/api/config").then(function (c) {
+      $("delMode").value = c.delete_mode;
+      state.dryRun = !!c.dry_run;
+      $("optDryRun").checked = state.dryRun;
+      renderDeleteButton();
+    }).catch(function () {});
     loadScans().then(loadGroups);
     pollStatus();
     setInterval(pollStatus, 1000);
