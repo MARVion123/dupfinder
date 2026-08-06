@@ -121,6 +121,9 @@
     <span id="selBytes">0 B</span> will be freed
   </div>
   <div class="actionbar-controls">
+    <label class="dryrun" title="Run every check and fill the log, but leave every file exactly where it is">
+      <input type="checkbox" id="optDryRun"> Simulate only
+    </label>
     <select id="delMode">
       <option value="quarantine">Move to quarantine (undoable)</option>
       <option value="recycle">Move to DSM recycle bin</option>

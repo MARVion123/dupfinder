@@ -8,6 +8,7 @@ the scanner say "these two files are 84% alike" instead of only "identical" or
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 
 CHUNK = 1024 * 1024
@@ -332,18 +333,21 @@ IMAGE_EXTS = {
 
 _PIL_CHECKED = False
 _PIL_IMAGE = None
+_PIL_OPS = None
 
 
 def pillow_available() -> bool:
-    global _PIL_CHECKED, _PIL_IMAGE
+    global _PIL_CHECKED, _PIL_IMAGE, _PIL_OPS
     if not _PIL_CHECKED:
         _PIL_CHECKED = True
         try:
-            from PIL import Image  # type: ignore
+            from PIL import Image, ImageOps  # type: ignore
 
             _PIL_IMAGE = Image
+            _PIL_OPS = ImageOps
         except Exception:
             _PIL_IMAGE = None
+            _PIL_OPS = None
     return _PIL_IMAGE is not None
 
 
@@ -365,6 +369,91 @@ def image_dhash(path: str) -> str | None:
             if px[base + col] > px[base + col + 1]:
                 bits |= 1
     return "%016x" % bits
+
+
+# EXIF tag numbers straight from the spec - Pillow hands them back as plain
+# ints, and importing PIL.ExifTags just to name them would make this module
+# depend on Pillow at import time.
+_EXIF_IFD = 0x8769
+_EXIF_DATETIME_ORIGINAL = 0x9003
+_EXIF_DATETIME_DIGITIZED = 0x9004
+_TIFF_DATETIME = 0x0132
+_TIFF_MAKE = 0x010F
+_TIFF_MODEL = 0x0110
+
+
+def _exif_text(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    value = str(value).replace("\x00", " ").strip()
+    return value or None
+
+
+def image_meta(path: str) -> dict | None:
+    """Dimensions and, for photos, the capture date and the camera.
+
+    Deliberately not called while listing results: that would mean opening and
+    header-parsing every image on the page. It runs for one group at a time,
+    when the group is expanded.
+    """
+    if not pillow_available():
+        return None
+    try:
+        with _PIL_IMAGE.open(path) as im:  # type: ignore[union-attr]
+            meta = {"width": im.width, "height": im.height, "format": im.format}
+            try:
+                exif = im.getexif()
+            except Exception:
+                exif = None
+    except Exception:
+        return None
+    if not exif:
+        return meta
+
+    try:
+        sub = exif.get_ifd(_EXIF_IFD) or {}
+    except Exception:
+        sub = {}
+    for source, tag in ((sub, _EXIF_DATETIME_ORIGINAL),
+                        (sub, _EXIF_DATETIME_DIGITIZED),
+                        (exif, _TIFF_DATETIME)):
+        raw = _exif_text(source.get(tag)) if source else None
+        if raw:
+            # EXIF writes "2019:07:14 18:22:05". Only the date part uses colons
+            # as separators, so replace exactly the first two.
+            meta["taken"] = raw.replace(":", "-", 2)
+            break
+
+    make = _exif_text(exif.get(_TIFF_MAKE))
+    model = _exif_text(exif.get(_TIFF_MODEL))
+    if make and model and model.lower().startswith(make.split()[0].lower()):
+        make = None                      # "NIKON CORPORATION" + "NIKON D750"
+    camera = " ".join(x for x in (make, model) if x)
+    if camera:
+        meta["camera"] = camera
+    return meta
+
+
+def image_thumbnail(path: str, size: int = 360) -> bytes | None:
+    """JPEG bytes of a downscaled preview, or None if it cannot be rendered."""
+    if not pillow_available():
+        return None
+    try:
+        with _PIL_IMAGE.open(path) as im:  # type: ignore[union-attr]
+            # Honour the EXIF orientation flag. Without this, phone photos are
+            # shown rotated here and upright in every other viewer, which reads
+            # as "these two files differ" when they do not.
+            im = _PIL_OPS.exif_transpose(im)  # type: ignore[union-attr]
+            im.thumbnail((size, size))
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=80, optimize=True)
+            return buf.getvalue()
+    except Exception:
+        return None
 
 
 def dhash_similarity(a: str | None, b: str | None) -> int:

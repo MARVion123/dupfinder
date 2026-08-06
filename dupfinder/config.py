@@ -82,6 +82,10 @@ DEFAULTS = {
     # permanent   -> unlink immediately
     "delete_mode": "quarantine",
     "protect_last_copy": True,     # never let a group reach zero surviving files
+    # Rehearsal mode. Every check runs and the log fills up, but no file is
+    # touched. Sticky on purpose: it is the setting you want to leave on while
+    # you learn to trust the suggestions, not one to re-tick every time.
+    "dry_run": False,
     # --- AI suggestions ---
     "ai_enabled": True,
     "ai_model": "claude-opus-5",

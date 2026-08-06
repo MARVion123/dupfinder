@@ -12,7 +12,7 @@
  * page is quietly throwing, and that should not go unnoticed.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chromium } from "playwright";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -67,6 +67,12 @@ function buildFixture() {
 
   fs.writeFileSync(path.join(tree, "a/unique.bin"), crypto.randomBytes(100000));
 
+  // Two identical photos carrying an EXIF capture date and a camera, so the
+  // preview and the metadata line have something real to render. Written with
+  // Pillow because hand-rolling a valid JPEG with an EXIF IFD in the test
+  // would be testing the fixture rather than the app.
+  const photos = makePhotos(tree);
+
   const data = path.join(root, "data");
   fs.mkdirSync(data);
   // No BOM - the server silently falls back to defaults on a corrupt config.
@@ -75,7 +81,39 @@ function buildFixture() {
     JSON.stringify({ roots_allowlist: [tree], ai_enabled: false, port: PORT }, null, 2),
     "utf8",
   );
-  return { root, tree, data };
+  return { root, tree, data, photos };
+}
+
+// Returns { ok, taken, camera }. ok=false when Pillow is missing locally, in
+// which case the preview steps report as skipped instead of failing - the
+// server degrades the same way.
+function makePhotos(tree) {
+  const taken = "2019:07:14 18:22:05";
+  const camera = "NIKON D750";
+  const script = `
+import sys
+from PIL import Image
+im = Image.new("RGB", (640, 480))
+for y in range(480):
+    for x in range(0, 640, 8):
+        im.paste((x % 256, y % 256, (x + y) % 256), (x, y, x + 8, y + 1))
+exif = im.getexif()
+exif[0x0110] = ${JSON.stringify(camera)}
+exif[0x010F] = "NIKON CORPORATION"
+exif.get_ifd(0x8769)[0x9003] = ${JSON.stringify(taken)}
+for target in sys.argv[1:]:
+    im.save(target, "JPEG", quality=92, exif=exif)
+`;
+  const a = path.join(tree, "a/holiday.jpg");
+  const b = path.join(tree, "c/holiday copy.jpg");
+  const res = spawnSync(PYTHON, ["-c", script, a, b], { encoding: "utf8" });
+  if (res.status !== 0) {
+    console.log(`  (no photo fixture: ${(res.stderr || "").trim().split("\n").pop()})`);
+    return { ok: false };
+  }
+  // The server turns EXIF's "2019:07:14 18:22:05" into "2019-07-14 18:22:05"
+  // by replacing exactly the first two colons.
+  return { ok: true, a, b, camera, taken: "2019-07-14 18:22:05" };
 }
 
 // ---------------------------------------------------------------- server
@@ -158,12 +196,14 @@ async function run() {
     await page.click("#btnStartScan");
     // The modal is closed by adding .hidden, so wait on the class, not visibility.
     await page.waitForSelector("#modalPick.hidden", { state: "attached" });
-    await page.waitForFunction(() => document.querySelectorAll("tr.group-row").length >= 3,
-      null, { timeout: 60000 });
+    // Three content groups, plus the photo pair when Pillow was there to write it.
+    const expectGroups = fx.photos.ok ? 4 : 3;
+    await page.waitForFunction((n) => document.querySelectorAll("tr.group-row").length >= n,
+      expectGroups, { timeout: 60000 });
     const groups = await page.locator("tr.group-row").count();
-    step("scan completes and renders groups", groups === 3, `${groups} groups`);
+    step("scan completes and renders groups", groups === expectGroups, `${groups} groups`);
     step("summary tiles filled",
-      (await page.locator("#sumGroups").textContent()) === "3" &&
+      (await page.locator("#sumGroups").textContent()) === String(expectGroups) &&
       (await page.locator("#sumWasted").textContent()) !== "0 B",
       `${await page.locator("#sumGroups").textContent()} groups / ` +
       `${await page.locator("#sumWasted").textContent()} reclaimable`);
@@ -194,14 +234,14 @@ async function run() {
     await shot("05-filter-near");
 
     await page.selectOption("#fKind", "all");
-    await page.waitForFunction(() => document.querySelectorAll("tr.group-row").length === 3);
+    await page.waitForFunction((n) => document.querySelectorAll("tr.group-row").length === n, expectGroups);
 
     await page.fill("#fSearch", "notes");
     await page.waitForFunction(() => document.querySelectorAll("tr.group-row").length === 1,
       null, { timeout: 5000 });
     step("path search filters", true, "1 group for 'notes'");
     await page.fill("#fSearch", "");
-    await page.waitForFunction(() => document.querySelectorAll("tr.group-row").length === 3);
+    await page.waitForFunction((n) => document.querySelectorAll("tr.group-row").length === n, expectGroups);
 
     // 5. Expand a group --------------------------------------------------
     await page.click('th.sortable[data-sort="wasted"]');
@@ -216,6 +256,42 @@ async function run() {
       `${await page.locator("tr.detail span.tag.delete").count()} delete`);
     await shot("06-group-expanded");
 
+    // 5b. Image preview and EXIF metadata --------------------------------
+    if (fx.photos.ok) {
+      await page.fill("#fSearch", "holiday");
+      await page.waitForFunction(() => document.querySelectorAll("tr.group-row").length === 1,
+        null, { timeout: 5000 });
+      await page.click("tr.group-row >> nth=0");
+      await page.waitForSelector("tr.detail img.thumb");
+      // naturalWidth stays 0 unless the bytes actually decoded, so this proves
+      // /api/thumb returned a real JPEG rather than a 404 body.
+      await page.waitForFunction(() => {
+        const img = document.querySelector("tr.detail img.thumb");
+        return img && img.complete && img.naturalWidth > 0;
+      }, null, { timeout: 15000 });
+      const dims = await page.evaluate(() => {
+        const img = document.querySelector("tr.detail img.thumb");
+        return { w: img.naturalWidth, h: img.naturalHeight };
+      });
+      step("image preview decodes", dims.w > 0 && dims.w <= 360,
+        `${dims.w}×${dims.h} thumbnail from a 640×480 original`);
+
+      await page.waitForSelector("tr.detail .fmeta");
+      const meta = (await page.locator("tr.detail .fmeta >> nth=0").textContent()).trim();
+      step("dimensions, capture date and camera shown",
+        meta.includes("640 × 480") && meta.includes(fx.photos.taken) &&
+        meta.includes(fx.photos.camera), meta);
+      await shot("06b-preview");
+
+      await page.click("tr.group-row >> nth=0");            // collapse it again
+      await page.fill("#fSearch", "");
+      await page.waitForFunction((n) => document.querySelectorAll("tr.group-row").length === n,
+        expectGroups);
+    } else {
+      step("image preview decodes", true, "skipped — Pillow not installed here");
+      step("dimensions, capture date and camera shown", true, "skipped");
+    }
+
     // 6. Selection -------------------------------------------------------
     await page.click(".act-select-sugg");
     await page.waitForSelector("#actionBar:not(.hidden)");
@@ -224,8 +300,52 @@ async function run() {
       `${selText}, ${await page.locator("#selBytes").textContent()}`);
     await shot("07-selected");
 
-    // 7. Delete with confirmation ---------------------------------------
+    // 6b. Rehearsal: same selection, nothing may be touched ---------------
     await page.selectOption("#delMode", "quarantine");
+    const guarded = ["a/report.bin", "b/sub/report copy.bin", "c/report (1).bin"]
+      .map((p) => path.join(fx.tree, ...p.split("/")))
+      .filter((p) => fs.existsSync(p));
+
+    await page.check("#optDryRun");
+    await page.waitForFunction(() =>
+      document.getElementById("btnDelete").textContent.includes("Simulate"));
+    step("simulation relabels the delete button", true,
+      `"${(await page.locator("#btnDelete").textContent()).trim()}"`);
+
+    await page.click("#btnDelete");
+    await page.waitForSelector("#modalConfirm:not(.hidden)");
+    const dryAsk = (await page.locator("#confirmText").textContent()).trim();
+    step("simulation says up front that nothing is touched",
+      dryAsk.includes("Nothing will be touched"), dryAsk);
+    await page.click("#btnConfirmGo");
+    await page.waitForFunction(
+      () => document.getElementById("toast").textContent.includes("Simulated"),
+      null, { timeout: 15000 });
+    const dryToast = (await page.locator("#toast").textContent()).trim();
+    step("simulation reports what a real run would do",
+      dryToast.includes("would be removed"), dryToast);
+
+    step("simulation left every file on disk",
+      guarded.length > 0 && guarded.every((p) => fs.existsSync(p)),
+      `${guarded.length} files still present`);
+
+    await page.click("#btnLog");
+    await page.waitForSelector("#modalLog:not(.hidden)");
+    await page.waitForSelector("#logBody tr.simulated");
+    const simRows = await page.locator("#logBody tr.simulated").count();
+    const simRestore = await page.locator("#logBody tr.simulated .act-restore").count();
+    step("simulated entries are logged but never restorable",
+      simRows === 2 && simRestore === 0,
+      `${simRows} simulated rows, ${simRestore} restore buttons`);
+    await shot("07a-simulated-log");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("#modalLog.hidden", { state: "attached" });
+
+    await page.uncheck("#optDryRun");
+    await page.waitForFunction(() =>
+      document.getElementById("btnDelete").textContent.includes("Delete selected"));
+
+    // 7. Delete with confirmation ---------------------------------------
     await page.click("#btnDelete");
     await page.waitForSelector("#modalConfirm:not(.hidden)");
     step("delete asks for confirmation first",
@@ -234,11 +354,13 @@ async function run() {
     await shot("08-confirm");
 
     await page.click("#btnConfirmGo");
-    // The toast is shared and may still be showing "Scan finished." - wait for
-    // the delete's own text rather than for the element to become visible.
-    await page.waitForFunction(
-      () => document.getElementById("toast").textContent.includes("removed"),
-      null, { timeout: 15000 });
+    // The toast is shared and still carries the rehearsal's "2 would be
+    // removed", which matches a naive "removed" check straight away. Wait for
+    // a message that is about a real deletion.
+    await page.waitForFunction(() => {
+      const t = document.getElementById("toast").textContent;
+      return t.includes("removed") && !t.includes("Simulated");
+    }, null, { timeout: 15000 });
     const toast = (await page.locator("#toast").textContent()).trim();
     step("quarantine delete reports back", toast.includes("2 removed"), toast);
 
@@ -248,7 +370,9 @@ async function run() {
     await page.waitForSelector("#logBody tr");
     const logRows = await page.locator("#logBody tr").count();
     const restorable = await page.locator(".act-restore").count();
-    step("action log lists the moves", logRows === 2 && restorable === 2,
+    // Two simulated rows from the rehearsal plus the two real moves; only the
+    // real ones may be offered for restore.
+    step("action log lists the moves", logRows === 4 && restorable === 2,
       `${logRows} rows, ${restorable} restorable`);
     await shot("09-log");
 
@@ -256,8 +380,8 @@ async function run() {
     // original quarantine row keeps its Restore button, so the button count
     // does not drop - assert on the new row and the toast instead.
     await page.click(".act-restore >> nth=0");
-    await page.waitForFunction(() => document.querySelectorAll("#logBody tr").length === 3,
-      null, { timeout: 15000 });
+    await page.waitForFunction((n) => document.querySelectorAll("#logBody tr").length === n,
+      logRows + 1, { timeout: 15000 });
     const restoreToast = (await page.locator("#toast").textContent()).trim();
     const restoredOnDisk = fs.existsSync(path.join(fx.tree, "a", "report.bin")) ||
       fs.existsSync(path.join(fx.tree, "b", "sub", "report copy.bin")) ||

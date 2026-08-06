@@ -182,6 +182,24 @@ table.files tr:last-child td { border-bottom: none; }
 .tag.delete { background: rgba(211,69,59,.14); color: var(--danger); }
 .tag.review { background: rgba(183,121,31,.16); color: var(--warn); }
 .reason { color: var(--muted); font-size: 11.5px; }
+.tag.sim { background: rgba(70,110,190,.16); color: var(--accent); }
+
+/* ---------- image preview in an expanded group ---------- */
+.fwrap { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.ftext { min-width: 0; flex: 1; }
+.thumb {
+  width: 72px; height: 72px; flex: none;
+  object-fit: cover; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bg);
+}
+/* A preview can fail for reasons that are not worth an error: the file moved,
+   the format needs a codec Pillow lacks. Collapse rather than show a broken
+   image icon, and keep the row's layout intact. */
+.thumb.broken { display: none; }
+.fmeta {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--muted); font-size: 11.5px; margin-top: 2px;
+}
 .detail-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
 .gone { opacity: .45; text-decoration: line-through; }
 
@@ -197,6 +215,18 @@ table.files tr:last-child td { border-bottom: none; }
   box-shadow: 0 -4px 16px rgba(16,24,40,.08);
 }
 .actionbar-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.actionbar .dryrun {
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 12.5px; color: var(--muted);
+  padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px;
+}
+/* Make the whole bar say it, not just the checkbox. The one thing that must
+   never happen is pressing the button believing it does the other thing. */
+.actionbar.simulating { border-top: 2px solid var(--accent); }
+.actionbar.simulating .dryrun {
+  color: var(--accent); border-color: var(--accent); font-weight: 600;
+}
+tr.simulated td { opacity: .72; }
 
 /* ---------- modals ---------- */
 .modal {
