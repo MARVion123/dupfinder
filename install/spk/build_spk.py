@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""Build a Synology DSM 7 package (.spk) for Duplicate Finder.
+"""Build a Synology DSM 7 package (.spk) for Duplicate File Finder.
 
     python3 install/spk/build_spk.py
 
@@ -50,7 +50,7 @@ def build_info(version: str) -> str:
         ("version", "%s-%s" % (version, BUILD_NUMBER)),
         ("os_min_ver", "7.0-40000"),
         ("arch", "noarch"),
-        ("displayname", "Duplicate Finder"),
+        ("displayname", "Duplicate File Finder for Synology NAS"),
         ("description",
          "Find duplicate and near-duplicate files anywhere under a directory "
          "you choose, see how similar they are, and remove the copies you tick. "

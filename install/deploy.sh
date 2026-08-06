@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pull the latest Duplicate Finder from git and roll it out on a Synology NAS.
+# Pull the latest Duplicate File Finder from git and roll it out on the NAS.
 #
 #   sh deploy.sh            # deploy if the remote moved, otherwise do nothing
 #   sh deploy.sh --force    # deploy even if nothing changed

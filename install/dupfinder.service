@@ -1,5 +1,5 @@
 [Unit]
-Description=Duplicate Finder web service
+Description=Duplicate File Finder for Synology NAS web service
 After=network-online.target
 Wants=network-online.target
 

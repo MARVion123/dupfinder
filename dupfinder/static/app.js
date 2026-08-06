@@ -1,4 +1,4 @@
-/* Duplicate Finder UI - vanilla JS, no build step. */
+/* Duplicate File Finder for Synology NAS UI - vanilla JS, no build step. */
 (function () {
   "use strict";
 

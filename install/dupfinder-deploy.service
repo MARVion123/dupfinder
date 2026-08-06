@@ -1,5 +1,5 @@
 [Unit]
-Description=Duplicate Finder: pull from git and deploy
+Description=Duplicate File Finder for Synology NAS: pull from git and deploy
 # Without this the timer fires before the NAS can reach github.com after a
 # reboot, and the run dies on a DNS lookup.
 After=network-online.target

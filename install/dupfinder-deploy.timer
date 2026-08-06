@@ -1,5 +1,5 @@
 [Unit]
-Description=Duplicate Finder: check git for updates nightly
+Description=Duplicate File Finder for Synology NAS: check git for updates nightly
 
 [Timer]
 OnCalendar=*-*-* 04:30:00

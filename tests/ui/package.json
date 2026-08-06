@@ -2,7 +2,7 @@
   "name": "dupfinder-ui-smoke",
   "private": true,
   "version": "1.0.0",
-  "description": "Headless browser smoke test for the Duplicate Finder UI.",
+  "description": "Headless browser smoke test for the Duplicate File Finder for Synology NAS UI.",
   "type": "module",
   "scripts": {
     "test": "node ui_smoke.mjs"
