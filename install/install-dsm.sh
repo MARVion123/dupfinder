@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install Duplicate Finder on Synology DSM 7.4.
+# Install Duplicate File Finder for Synology NAS on DSM 7.4.
 #
 #   sudo sh install-dsm.sh            # install + start
 #   sudo sh install-dsm.sh uninstall
@@ -68,7 +68,7 @@ sleep 2
 if systemctl is-active --quiet ${SERVICE}; then
     IP=$(hostname -i 2>/dev/null | awk '{print $1}')
     echo
-    echo "Duplicate Finder is running."
+    echo "Duplicate File Finder for Synology NAS is running."
     echo "  URL      : http://${IP:-<nas-ip>}:${PORT}"
     echo "  Data dir : ${DATA_DIR}"
     echo "  Logs     : journalctl -u ${SERVICE} -f"

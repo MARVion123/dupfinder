@@ -1,4 +1,4 @@
-# Duplicate Finder for Synology DSM 7.4
+# Duplicate File Finder for Synology NAS
 
 A self-hosted web app that finds duplicate and near-duplicate files anywhere
 under a directory you choose, rates how similar they are, explains which copies

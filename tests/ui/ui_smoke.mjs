@@ -1,5 +1,5 @@
 /**
- * Headless browser smoke test for the Duplicate Finder UI.
+ * Headless browser smoke test for the Duplicate File Finder for Synology NAS UI.
  *
  *   cd tests/ui && npm install && npx playwright install chromium && npm test
  *
@@ -130,7 +130,7 @@ async function run() {
   try {
     // 1. Initial load ----------------------------------------------------
     await page.goto(BASE, { waitUntil: "networkidle" });
-    step("page loads", (await page.title()) === "Duplicate Finder", await page.title());
+    step("page loads", (await page.title()) === "Duplicate File Finder for Synology NAS", await page.title());
     step("empty state visible", await page.locator("#emptyState").isVisible());
     await shot("01-initial");
 

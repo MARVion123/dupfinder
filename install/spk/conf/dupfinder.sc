@@ -1,5 +1,5 @@
 [dupfinder]
-title="Duplicate Finder"
-desc="Duplicate Finder web interface"
+title="Duplicate File Finder for Synology NAS"
+desc="Duplicate File Finder web interface"
 port_forward="no"
 dst.ports="@PORT@/tcp"
