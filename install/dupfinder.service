@@ -14,7 +14,9 @@ Environment=DUPFINDER_DATA_DIR=/var/services/dupfinder
 # Put the API key here, or set it in the UI (it is stored in config.json).
 # Environment=ANTHROPIC_API_KEY=sk-ant-...
 WorkingDirectory=/volume1/apps/dupfinder
-ExecStart=/bin/env python3 -m dupfinder serve
+# The port is spelled out rather than left to config.json so install/deploy.sh
+# can read it back out of this file for its health check.
+ExecStart=/bin/env python3 -m dupfinder serve --port 8777
 Restart=on-failure
 RestartSec=10
 # The scan is I/O heavy; be a good citizen on a NAS that also serves files.
