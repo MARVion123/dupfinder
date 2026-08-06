@@ -1,0 +1,25 @@
+[Unit]
+Description=Duplicate Finder web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# DSM 7 runs services as a dedicated user. Scanning shared folders needs
+# read access; deleting needs write access. Start with root only if you
+# understand the consequences - see README "Permissions".
+User=root
+Group=root
+Environment=DUPFINDER_DATA_DIR=/var/services/dupfinder
+# Put the API key here, or set it in the UI (it is stored in config.json).
+# Environment=ANTHROPIC_API_KEY=sk-ant-...
+WorkingDirectory=/volume1/apps/dupfinder
+ExecStart=/bin/env python3 -m dupfinder serve
+Restart=on-failure
+RestartSec=10
+# The scan is I/O heavy; be a good citizen on a NAS that also serves files.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+#!/bin/sh
+# Refuse the install early if there is no usable python3, rather than letting
+# the package install and then fail to start with no explanation.
+
+for candidate in \
+    /usr/local/bin/python3 \
+    /usr/bin/python3 \
+    "$(command -v python3 2>/dev/null)"
+do
+    [ -n "${candidate}" ] || continue
+    [ -x "${candidate}" ] || continue
+    if "${candidate}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' \
+        >/dev/null 2>&1; then
+        exit 0
+    fi
+done
+
+echo "Python 3.8 or newer is required. Install 'Python 3' from Package Center, then install this package again." \
+    > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+exit 1

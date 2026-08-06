@@ -1,0 +1,4 @@
+#!/bin/sh
+# See prereplace: intentionally a no-op, but present so DSM's replace path
+# has every script it expects.
+exit 0

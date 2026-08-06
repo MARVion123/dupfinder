@@ -1,0 +1,13 @@
+{
+  "name": "dupfinder-ui-smoke",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Headless browser smoke test for the Duplicate Finder UI.",
+  "type": "module",
+  "scripts": {
+    "test": "node ui_smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+
+# Built packages - rebuild with install/spk/build_spk.py
+install/spk/dist/
+
+# UI test artefacts
+tests/ui/node_modules/
+tests/ui/screenshots/
+tests/ui/package-lock.json
+
+# Runtime state: database, config (may hold an API key), quarantine
+*.db
+*.db-wal
+*.db-shm
+config.json
+.dupfinder-trash/

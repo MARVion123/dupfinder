@@ -1,0 +1,3 @@
+#!/bin/sh
+# See preupgrade: nothing to restore.
+exit 0

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Duplicate Finder</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128269;</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">⧉</span>
+    <div>
+      <h1>Duplicate Finder</h1>
+      <div class="sub" id="scanSubtitle">No scan yet</div>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btnPick" class="primary">Choose folder &amp; scan</button>
+    <button id="btnCancel" class="danger hidden">Stop scan</button>
+    <button id="btnRescan" class="ghost hidden">Run again</button>
+    <button id="btnSuggest" class="ghost">AI suggestions</button>
+    <button id="btnLog" class="ghost">Log</button>
+    <button id="btnSettings" class="ghost" title="Settings">⚙</button>
+  </div>
+</header>
+
+<section id="progress" class="panel progress hidden">
+  <div class="progress-head">
+    <strong id="progPhase">Working…</strong>
+    <span id="progElapsed" class="muted"></span>
+  </div>
+  <div class="bar"><div id="progBar" class="bar-fill"></div></div>
+  <div class="progress-path muted" id="progPath"></div>
+  <div class="stats" id="progStats"></div>
+</section>
+
+<section id="aiProgress" class="panel progress hidden">
+  <div class="progress-head">
+    <strong>Claude is reviewing your duplicate groups…</strong>
+    <button id="btnAiCancel" class="ghost small">Stop</button>
+  </div>
+  <div class="bar"><div id="aiBar" class="bar-fill ai"></div></div>
+  <div class="muted" id="aiNote"></div>
+</section>
+
+<section class="panel summary" id="summary">
+  <div class="tile"><span class="k" id="sumGroups">0</span><span class="v">groups</span></div>
+  <div class="tile"><span class="k" id="sumFiles">0</span><span class="v">files involved</span></div>
+  <div class="tile accent"><span class="k" id="sumWasted">0 B</span><span class="v">reclaimable</span></div>
+  <div class="tile"><span class="k" id="sumShown">0</span><span class="v">shown</span></div>
+</section>
+
+<section class="panel filters">
+  <label>Type
+    <select id="fKind">
+      <option value="all">All</option>
+      <option value="exact">Exact duplicates</option>
+      <option value="near">Near duplicates</option>
+    </select>
+  </label>
+  <label>Min. similarity
+    <select id="fSim">
+      <option value="0">Any</option>
+      <option value="70">70%+</option>
+      <option value="85">85%+</option>
+      <option value="95">95%+</option>
+      <option value="99">Exact only (99%+)</option>
+    </select>
+  </label>
+  <label>Min. file size
+    <select id="fSize">
+      <option value="0">Any</option>
+      <option value="1048576">1 MB</option>
+      <option value="10485760">10 MB</option>
+      <option value="104857600">100 MB</option>
+      <option value="1073741824">1 GB</option>
+    </select>
+  </label>
+  <label class="grow">Search path
+    <input id="fSearch" type="search" placeholder="e.g. /volume1/photo/2019">
+  </label>
+  <label class="check"><input type="checkbox" id="fSuggested"> only with suggestion</label>
+  <label>Scan
+    <select id="fScan"></select>
+  </label>
+</section>
+
+<section class="panel results">
+  <table class="grid" id="grid">
+    <thead>
+      <tr>
+        <th class="col-check"><input type="checkbox" id="checkAll" title="Select all suggested deletions on this page"></th>
+        <th class="sortable" data-sort="similarity">Similarity</th>
+        <th class="sortable" data-sort="name">Group</th>
+        <th class="sortable num" data-sort="count">Copies</th>
+        <th class="sortable num" data-sort="largest">File size</th>
+        <th class="sortable num" data-sort="wasted">Reclaimable</th>
+        <th class="sortable num" data-sort="folders">Folders</th>
+        <th class="sortable" data-sort="confidence">Suggestion</th>
+      </tr>
+    </thead>
+    <tbody id="gridBody"></tbody>
+  </table>
+  <div id="emptyState" class="empty">
+    <p>No results yet.</p>
+    <p class="muted">Pick a folder and start a scan. There is no limit on how long it runs — you can stop it at any time and the partial results stay.</p>
+  </div>
+  <div class="pager">
+    <button id="btnPrev" class="ghost small">◀ Previous</button>
+    <span id="pageInfo" class="muted"></span>
+    <button id="btnNext" class="ghost small">Next ▶</button>
+  </div>
+</section>
+
+<div id="actionBar" class="actionbar hidden">
+  <div>
+    <strong id="selCount">0 files</strong> selected ·
+    <span id="selBytes">0 B</span> will be freed
+  </div>
+  <div class="actionbar-controls">
+    <select id="delMode">
+      <option value="quarantine">Move to quarantine (undoable)</option>
+      <option value="recycle">Move to DSM recycle bin</option>
+      <option value="permanent">Delete permanently</option>
+    </select>
+    <button id="btnClearSel" class="ghost">Clear</button>
+    <button id="btnDelete" class="danger">Delete selected</button>
+  </div>
+</div>
+
+<!-- ---------- modals ---------- -->
+<div id="modalPick" class="modal hidden">
+  <div class="modal-box">
+    <h2>Choose a folder to scan</h2>
+    <div class="crumbs" id="pickPath">/</div>
+    <ul class="browser" id="pickList"></ul>
+    <div class="scan-options">
+      <label class="check"><input type="checkbox" id="optVerify" checked> Byte-for-byte verification of every match</label>
+      <label class="check"><input type="checkbox" id="optNear" checked> Find near-duplicates (fuzzy + image similarity)</label>
+      <label>Near-duplicate threshold <input id="optThreshold" type="number" min="40" max="99" value="70"> %</label>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" data-close>Cancel</button>
+      <button id="btnStartScan" class="primary">Scan this folder</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalSettings" class="modal hidden">
+  <div class="modal-box">
+    <h2>Settings</h2>
+    <div class="form" id="settingsForm">
+      <label>Claude model <input id="setModel"></label>
+      <label>Reasoning effort
+        <select id="setEffort">
+          <option>low</option><option>medium</option><option>high</option>
+          <option>xhigh</option><option>max</option>
+        </select>
+      </label>
+      <label>Anthropic API key <input id="setKey" type="password" placeholder="leave blank to keep / use ANTHROPIC_API_KEY"></label>
+      <label>Groups sent to Claude per run <input id="setMaxGroups" type="number" min="1" max="2000"></label>
+      <label>Default delete mode
+        <select id="setDelMode">
+          <option value="quarantine">quarantine</option>
+          <option value="recycle">recycle</option>
+          <option value="permanent">permanent</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="setProtect"> Never delete the last copy of a group</label>
+      <label class="check"><input type="checkbox" id="setImages"> Perceptual image matching (needs Pillow)</label>
+      <label>Near-duplicates: MiB read per file <input id="setFuzzyMiB" type="number" min="0" max="4096" step="1">
+        <span class="hint">0 = read every file in full. Fuzzy hashing runs at a few MiB/s, so this is what decides whether a scan over large files finishes in minutes or hours. Exact duplicates are never affected.</span>
+      </label>
+      <label>Excluded folder names <textarea id="setExcludes" rows="3"></textarea></label>
+      <label>Allowed roots <textarea id="setRoots" rows="2"></textarea></label>
+    </div>
+    <p class="muted" id="settingsNote"></p>
+    <div class="modal-actions">
+      <button class="ghost" data-close>Close</button>
+      <button id="btnSaveSettings" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalLog" class="modal hidden">
+  <div class="modal-box wide">
+    <h2>Action log</h2>
+    <p class="muted">Everything this tool moved or deleted. Quarantined files can be put back.</p>
+    <table class="grid log"><tbody id="logBody"></tbody></table>
+    <div class="modal-actions">
+      <button id="btnEmptyTrash" class="danger ghost">Empty quarantine for this scan</button>
+      <button class="ghost" data-close>Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalConfirm" class="modal hidden">
+  <div class="modal-box">
+    <h2 id="confirmTitle">Are you sure?</h2>
+    <p id="confirmText"></p>
+    <div class="modal-actions">
+      <button class="ghost" data-close>Cancel</button>
+      <button id="btnConfirmGo" class="danger">Yes, continue</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
