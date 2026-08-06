@@ -1,0 +1,14 @@
+[Unit]
+Description=Duplicate Finder: check git for updates nightly
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+# Spread the load and dodge the exact minute every other nightly job picks.
+RandomizedDelaySec=900
+# If the NAS was asleep or off at 04:30, run once after it comes back rather
+# than skipping the day entirely.
+Persistent=true
+Unit=dupfinder-deploy.service
+
+[Install]
+WantedBy=timers.target
