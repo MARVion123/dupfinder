@@ -119,6 +119,47 @@ journalctl -u dupfinder -f        # logs
 sudo sh install/install-dsm.sh uninstall
 ```
 
+### Keeping the NAS up to date from git
+
+`install/deploy.sh` pulls this repository on the NAS and rolls the new version
+into the running service. One-time setup over SSH as root:
+
+```sh
+mkdir -p /volume1/apps/src
+git clone https://github.com/MARVion123/dupfinder.git /volume1/apps/src/dupfinder
+chmod +x /volume1/apps/src/dupfinder/install/deploy.sh
+/volume1/apps/src/dupfinder/install/deploy.sh --force
+```
+
+From then on:
+
+```sh
+/volume1/apps/src/dupfinder/install/deploy.sh          # deploy if the remote moved
+/volume1/apps/src/dupfinder/install/deploy.sh --check  # show what would change
+/volume1/apps/src/dupfinder/install/deploy.sh --force  # redeploy the current commit
+```
+
+The script does nothing when the remote has not moved, so it is safe to run on
+a schedule. Before it stops the service it runs `compileall` over the new
+checkout, and if the new version does not answer within 15 seconds it puts the
+previous copy back and restarts. It reads the interpreter and the port out of
+the existing unit file, so switching to a virtualenv or another port needs no
+change here.
+
+To have it check nightly:
+
+```sh
+cp /volume1/apps/src/dupfinder/install/dupfinder-deploy.{service,timer} \
+   /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable dupfinder-deploy.timer
+systemctl start  dupfinder-deploy.timer
+systemctl list-timers dupfinder-deploy --no-pager
+```
+
+`git` has to be on the NAS — Package Center → Git Server, or Entware. The
+script says so plainly if it is missing.
+
 ### Alternative: Container Manager
 
 ```sh
@@ -223,7 +264,7 @@ touches nothing outside a temp directory.
 cd tests/ui
 npm install
 npx playwright install chromium
-npm test                 # 24 checks; screenshots land in tests/ui/screenshots/
+npm test                 # 26 checks; screenshots land in tests/ui/screenshots/
 ```
 
 It fails the run on any uncaught JS exception, `console.error`, or HTTP 4xx/5xx
@@ -259,6 +300,7 @@ dupfinder/
   server.py     JSON API + static file serving
   static/       the UI (no build step)
 install/        systemd unit, DSM installer, Dockerfile, compose file
+  deploy.sh     git pull -> verify -> swap -> health check -> roll back
   spk/          Synology package sources + build_spk.py
 tests/ui/       headless-browser smoke test (Playwright)
 ```

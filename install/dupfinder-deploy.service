@@ -1,0 +1,14 @@
+[Unit]
+Description=Duplicate Finder: pull from git and deploy
+# Without this the timer fires before the NAS can reach github.com after a
+# reboot, and the run dies on a DNS lookup.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/volume1/apps/src/dupfinder/install/deploy.sh
+# Nothing to do is the normal outcome, so let the run be quiet unless the
+# script actually says something.
+StandardOutput=journal
+StandardError=journal
