@@ -150,9 +150,13 @@
     }
     state.scanRunning = running;
     if (running && !state.__tick) {
+      // Exact groups are published as soon as they are proven, well before the
+      // near-duplicate pass finishes, so this refresh actually has something to
+      // fetch during a scan. 3s is responsive without hammering a NAS that is
+      // busy hashing.
       state.__tick = setInterval(function () {
-        if (Date.now() - (state.__lastLoad || 0) > 6000) { state.__lastLoad = Date.now(); loadGroups(true); }
-      }, 6000);
+        if (Date.now() - (state.__lastLoad || 0) > 3000) { state.__lastLoad = Date.now(); loadGroups(true); }
+      }, 3000);
     }
     if (!running && state.__tick) { clearInterval(state.__tick); state.__tick = null; }
   }

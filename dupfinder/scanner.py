@@ -202,22 +202,20 @@ class ScanEngine:
             candidates = self._quick_pass(scan_id, candidates)
             md5_groups = self._md5_pass(scan_id, candidates)
             exact = self._verify_pass(scan_id, md5_groups, opts)
+            # Publish the exact groups now rather than at the end. They are
+            # already proven byte for byte, and the near-duplicate pass that
+            # follows can run for minutes - during which the table would
+            # otherwise sit empty even though the answer is largely known.
+            # Written without switching the phase display, which still belongs
+            # to whatever runs next.
+            self._build_groups(scan_id, exact, [], phase=False)
+            self._suggest(scan_id)
+
             near = []
             if opts.get("near_duplicates"):
                 near = self._fuzzy_pass(scan_id, exact, opts)
-            self._build_groups(scan_id, exact, near)
-            # Fill the suggestion column with the local rule engine, the same
-            # way the CLI does after a headless scan. Without this a scan
-            # started from the web UI leaves every group unsuggested, which
-            # also makes the per-group "select suggested deletions" checkbox
-            # and the confidence sort inert until the user happens to press
-            # "AI suggestions". Idempotent: the insert upserts on group_id.
-            try:
-                from .ai import heuristic_suggestions
-
-                heuristic_suggestions(self.db, scan_id)
-            except Exception:  # noqa: BLE001 - a suggestion must never fail a scan
-                pass
+                self._build_groups(scan_id, [], near)
+                self._suggest(scan_id)
             self._finish(scan_id, "done")
         except Cancelled:
             self._finish(scan_id, "cancelled")
@@ -229,6 +227,22 @@ class ScanEngine:
             )
             self._set(error=msg)
             self._finish(scan_id, "error")
+
+    def _suggest(self, scan_id):
+        """Fill the suggestion column with the local rule engine.
+
+        Without this a scan started from the web UI leaves every group
+        unsuggested, which also makes the per-group "select suggested
+        deletions" checkbox and the confidence sort inert. Idempotent: the
+        insert upserts on group_id, so running it again after the
+        near-duplicate groups arrive only adds the new ones.
+        """
+        try:
+            from .ai import heuristic_suggestions
+
+            heuristic_suggestions(self.db, scan_id)
+        except Exception:  # noqa: BLE001 - a suggestion must never fail a scan
+            pass
 
     def _finish(self, scan_id, state):
         st = self.status()
@@ -665,11 +679,17 @@ class ScanEngine:
         return int(min(98, max(0, round(score))))
 
     # ---- write groups -----------------------------------------------
-    def _build_groups(self, scan_id, exact, near):
-        self._phase("group", len(exact) + len(near))
+    def _build_groups(self, scan_id, exact, near, phase=True):
+        """Write groups to the database.
+
+        Called twice per scan: once with the exact groups the moment they are
+        proven, once with the near-duplicate ones afterwards. The counters
+        accumulate through _bump rather than being assigned, so the second call
+        cannot erase what the first reported.
+        """
+        if phase:
+            self._phase("group", len(exact) + len(near))
         conn = self.db.connect()
-        total_wasted = 0
-        groups_found = 0
 
         for sig, verified, ids in exact:
             self._abort_if_cancelled()
@@ -678,15 +698,17 @@ class ScanEngine:
                 verified, ids, {i: (100.0 if verified else 99.0) for i in ids},
             )
             if gid:
-                groups_found += 1
-                total_wasted += self._group_waste(conn, gid)
-            self._bump("done")
+                self._bump("groups_found")
+                self._bump("wasted_bytes", self._group_waste(conn, gid))
+            if phase:
+                self._bump("done")
 
         for members, pairs in near:
             self._abort_if_cancelled()
             meta = self._meta(conn, members)
             if len(meta) < 2:
-                self._bump("done")
+                if phase:
+                    self._bump("done")
                 continue
             # Representative = largest, then oldest: the copy most likely to be
             # the original rather than a re-export.
@@ -703,12 +725,15 @@ class ScanEngine:
                 [m["id"] for m in meta], sims,
             )
             if gid:
-                groups_found += 1
-                total_wasted += self._group_waste(conn, gid)
-            self._bump("done")
+                self._bump("groups_found")
+                self._bump("wasted_bytes", self._group_waste(conn, gid))
+            if phase:
+                self._bump("done")
 
+        # Commit here and not per group: the UI reads through WAL while this
+        # runs, and one commit at the end of each call is what makes the whole
+        # batch appear at once rather than half-built.
         conn.commit()
-        self._set(groups_found=groups_found, wasted_bytes=total_wasted)
 
     @staticmethod
     def _indirect(pairs, a, b):
