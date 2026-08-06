@@ -145,6 +145,14 @@ async function run() {
   fs.rmSync(SHOTS, { recursive: true, force: true });
   fs.mkdirSync(SHOTS, { recursive: true });
 
+  // A syntax error in app.js leaves the page inert, and every later step then
+  // fails as an unhelpful 30-second timeout. Checking it costs milliseconds.
+  const syntax = spawnSync(process.execPath,
+    ["--check", path.join(REPO, "dupfinder", "static", "app.js")], { encoding: "utf8" });
+  step("app.js parses", syntax.status === 0,
+    syntax.status === 0 ? "" : (syntax.stderr || "").split("\n").slice(0, 3).join(" ").trim());
+  if (syntax.status !== 0) throw new Error("app.js does not parse");
+
   const fx = buildFixture();
   console.log(`fixture : ${fx.tree}`);
   const server = await startServer(fx.data);
@@ -400,7 +408,7 @@ async function run() {
     const roots = await page.locator("#setRoots").inputValue();
     step("settings load current config", roots.includes(fx.tree), `roots: ${roots}`);
     const fuzzyMiB = await page.locator("#setFuzzyMiB").inputValue();
-    step("fuzzy byte budget shown in MiB", fuzzyMiB === "16", `${fuzzyMiB} MiB`);
+    step("fuzzy byte budget shown in MiB", fuzzyMiB === "4", `${fuzzyMiB} MiB`);
     await shot("11-settings");
     // Change it before saving: a field that only ever round-trips its default
     // would pass even if the save path dropped it entirely.

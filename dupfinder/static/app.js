@@ -662,6 +662,7 @@
       $("setProtect").checked = !!c.protect_last_copy;
       $("setImages").checked = !!c.image_similarity;
       $("setFuzzyMiB").value = Math.round((c.fuzzy_max_bytes || 0) / 1048576);
+      $("setSkipExts").value = (c.fuzzy_skip_exts || []).join("\n");
       $("setExcludes").value = (c.exclude_dirs || []).join("\n");
       $("setRoots").value = (c.roots_allowlist || []).join("\n");
       $("settingsNote").textContent = window.__pillow
@@ -680,6 +681,10 @@
       protect_last_copy: $("setProtect").checked,
       image_similarity: $("setImages").checked,
       fuzzy_max_bytes: Math.max(0, Number($("setFuzzyMiB").value) || 0) * 1048576,
+      fuzzy_skip_exts: $("setSkipExts").value.split("\n")
+        .map(function (s) { return s.trim().toLowerCase(); })
+        .filter(Boolean)
+        .map(function (s) { return s.charAt(0) === "." ? s : "." + s; }),
       exclude_dirs: $("setExcludes").value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean),
       roots_allowlist: $("setRoots").value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean)
     };

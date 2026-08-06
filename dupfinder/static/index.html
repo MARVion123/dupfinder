@@ -177,6 +177,9 @@
       <label>Near-duplicates: MiB read per file <input id="setFuzzyMiB" type="number" min="0" max="4096" step="1">
         <span class="hint">0 = read every file in full. Fuzzy hashing runs at a few MiB/s, so this is what decides whether a scan over large files finishes in minutes or hours. Exact duplicates are never affected.</span>
       </label>
+      <label>Skip near-duplicate check for these types <textarea id="setSkipExts" rows="2" spellcheck="false"></textarea>
+        <span class="hint">One extension per line. Compressed formats gain almost nothing from the fuzzy hash and cost a full read each. Exact duplicates are still found, and photos still go through the perceptual hash.</span>
+      </label>
       <label>Excluded folder names <textarea id="setExcludes" rows="3"></textarea></label>
       <label>Allowed roots <textarea id="setRoots" rows="2"></textarea></label>
     </div>
