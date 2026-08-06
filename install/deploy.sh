@@ -14,7 +14,6 @@ set -e
 REPO_URL=${REPO_URL:-https://github.com/MARVion123/dupfinder.git}
 BRANCH=${BRANCH:-main}
 SRC=${SRC:-/volume1/apps/src/dupfinder}     # the git working copy
-APP=${APP:-/volume1/apps}                   # holds the importable dupfinder/ package
 SERVICE=${SERVICE:-dupfinder}
 UNIT=/etc/systemd/system/${SERVICE}.service
 
@@ -34,12 +33,22 @@ die() { log "error: $*"; exit 1; }
 command -v git >/dev/null 2>&1 || die \
     "git is not installed. Package Center -> Git Server, or install it via Entware."
 
-# Reuse whatever interpreter and port the running unit was configured with,
-# so this script keeps working after a switch to a virtualenv or another port.
+# Reuse whatever interpreter, port and layout the running unit was configured
+# with, so this script keeps working after a switch to a virtualenv, another
+# port, or a different install path.
 PYTHON=$(awk -F= '/^ExecStart=/{print $2}' "${UNIT}" 2>/dev/null | awk '{print $1}')
 [ -n "${PYTHON}" ] && [ -x "${PYTHON}" ] || PYTHON=/usr/bin/python3
 PORT=$(awk -F'--port ' '/^ExecStart=/{print $2}' "${UNIT}" 2>/dev/null | awk '{print $1}')
 [ -n "${PORT}" ] || PORT=8777
+
+# The package has to land where `python3 -m dupfinder` will find it, which is
+# directly below the unit's WorkingDirectory. Hardcoding /volume1/apps broke
+# the combination of install-dsm.sh (which uses /volume1/apps/dupfinder) with
+# this script: the package went one level too high and the service died on
+# "No module named dupfinder".
+WORKDIR=$(awk -F= '/^WorkingDirectory=/{print $2}' "${UNIT}" 2>/dev/null)
+APP=${APP:-${WORKDIR:-/volume1/apps}}
+[ -d "${APP}" ] || die "WorkingDirectory ${APP} from ${UNIT} does not exist"
 
 # ---- fetch -----------------------------------------------------------------
 if [ ! -d "${SRC}/.git" ]; then
