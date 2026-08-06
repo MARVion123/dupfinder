@@ -1,0 +1,3 @@
+#!/bin/sh
+# DSM stops the package before calling this; nothing else to undo.
+exit 0

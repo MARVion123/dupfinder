@@ -1,0 +1,5 @@
+#!/bin/sh
+# Note: quarantined files live under each scan root in .dupfinder-trash/, not in
+# the package directory, so uninstalling does not restore or delete them.
+# Restore anything you still want from the UI before removing the package.
+exit 0

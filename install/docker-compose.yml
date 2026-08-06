@@ -1,0 +1,19 @@
+services:
+  dupfinder:
+    build:
+      context: ..
+      dockerfile: install/Dockerfile
+    container_name: dupfinder
+    restart: unless-stopped
+    ports:
+      - "8777:8777"
+    environment:
+      # Optional - only needed for the AI suggestion layer.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      DUPFINDER_DATA_DIR: /data
+    volumes:
+      # Paths must match the host so the UI shows real NAS paths.
+      - /volume1:/volume1
+      - /volume1/docker/dupfinder:/data
+    # Scanning is disk-bound; keep it from starving Samba/DSM services.
+    cpu_shares: 256

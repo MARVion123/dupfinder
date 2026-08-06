@@ -1,0 +1,8 @@
+# Everything in here is executed on a Linux NAS, including the shell scripts
+# in install/spk/scripts/. A CRLF checkout makes /bin/sh fail with a cryptic
+# "\r: not found", so line endings are pinned to LF on every platform rather
+# than left to core.autocrlf.
+* text=auto eol=lf
+
+*.png binary
+*.spk binary

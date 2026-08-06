@@ -1,0 +1,179 @@
+#!/bin/sh
+# Package control script for DSM 7.
+#
+# DSM calls this with start / stop / status / log. The service is a plain
+# background python3 process tracked by a pid file - the scanner is
+# single-threaded and stdlib-only, so there is nothing else to supervise.
+#
+# Everything the start path decides is written to the log first, because a
+# package that only reports "Error" in Package Center is impossible to debug.
+
+PKG_NAME="dupfinder"
+# Substituted at build time from PORT in build_spk.py, so the port DSM
+# advertises, opens in the firewall and the daemon binds cannot drift apart.
+PORT="@PORT@"
+PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+DATA_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+PID_FILE="${DATA_DIR}/dupfinder.pid"
+LOG_FILE="${DATA_DIR}/dupfinder.log"
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "${LOG_FILE}" 2>/dev/null
+}
+
+fatal() {
+    log "START FAILED: $*"
+    echo "$*" > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+    return 1
+}
+
+# DSM ships python3 in some builds; the Package Center "Python 3" package
+# installs it under /usr/local/bin. Prefer whichever is new enough.
+find_python() {
+    for candidate in \
+        /usr/local/bin/python3 \
+        /usr/bin/python3 \
+        "$(command -v python3 2>/dev/null)"
+    do
+        [ -n "${candidate}" ] || continue
+        [ -x "${candidate}" ] || continue
+        "${candidate}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' \
+            >/dev/null 2>&1 || continue
+        echo "${candidate}"
+        return 0
+    done
+    return 1
+}
+
+daemon_status() {
+    [ -r "${PID_FILE}" ] || return 1
+    pid=$(cat "${PID_FILE}" 2>/dev/null)
+    [ -n "${pid}" ] || return 1
+    kill -0 "${pid}" 2>/dev/null || return 1
+    return 0
+}
+
+start_daemon() {
+    daemon_status && return 0
+
+    mkdir -p "${DATA_DIR}" 2>/dev/null
+
+    # The daemon's stdout/stderr are redirected into the log. If that file is
+    # not writable the redirection fails, the process never starts, and there
+    # is nothing to read afterwards - so check it explicitly and say so.
+    # Run in a subshell: a failing redirection on a special builtin can
+    # otherwise take the whole script down.
+    if ! ( echo >> "${LOG_FILE}" ) 2>/dev/null; then
+        echo "Cannot write ${LOG_FILE}. Check the owner of ${DATA_DIR} - the package user needs write access." \
+            > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+        return 1
+    fi
+
+    log "--- start requested"
+    log "    user    : $(id -un 2>/dev/null || echo unknown)"
+    log "    pkg dir : ${PKG_DIR}"
+    log "    data dir: ${DATA_DIR}"
+
+    python_bin=$(find_python)
+    if [ -z "${python_bin}" ]; then
+        fatal "Python 3.8 or newer was not found. Install 'Python 3' from Package Center."
+        return 1
+    fi
+    log "    python  : ${python_bin} ($(${python_bin} -V 2>&1))"
+
+    [ -f "${PKG_DIR}/${PKG_NAME}/__main__.py" ] || {
+        fatal "Package files missing under ${PKG_DIR} - try reinstalling."
+        return 1
+    }
+
+    # nice/ionice are a courtesy for a NAS that is also serving files, not a
+    # requirement. If either is absent or not permitted for the package user,
+    # run without it - starting unniced beats not starting at all.
+    prefix=""
+    if command -v nice >/dev/null 2>&1 && nice -n 10 true >/dev/null 2>&1; then
+        prefix="nice -n 10"
+    fi
+    if command -v ionice >/dev/null 2>&1 && ionice -c 3 true >/dev/null 2>&1; then
+        prefix="${prefix} ionice -c 3"
+    fi
+    log "    prefix  : '${prefix}'"
+
+    cd "${PKG_DIR}" || { fatal "Cannot enter ${PKG_DIR}."; return 1; }
+
+    log "    port    : ${PORT}"
+    env DUPFINDER_DATA_DIR="${DATA_DIR}" \
+        PYTHONPATH="${PKG_DIR}" \
+        PYTHONUNBUFFERED=1 \
+        ${prefix} "${python_bin}" -m dupfinder serve --port "${PORT}" \
+        >> "${LOG_FILE}" 2>&1 &
+    echo $! > "${PID_FILE}"
+    log "    launched: pid $(cat "${PID_FILE}" 2>/dev/null)"
+
+    # Give it a few seconds to bind the port, so a crash on startup surfaces
+    # as a failed start instead of a package that claims to be running.
+    i=0
+    while [ ${i} -lt 10 ]; do
+        sleep 1
+        if daemon_status; then
+            log "    started ok"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+
+    rm -f "${PID_FILE}"
+    fatal "The service exited during startup. See ${LOG_FILE} for the traceback."
+    return 1
+}
+
+stop_daemon() {
+    if [ -r "${PID_FILE}" ]; then
+        pid=$(cat "${PID_FILE}" 2>/dev/null)
+        if [ -n "${pid}" ]; then
+            kill "${pid}" 2>/dev/null
+            i=0
+            while [ ${i} -lt 15 ]; do
+                kill -0 "${pid}" 2>/dev/null || break
+                sleep 1
+                i=$((i + 1))
+            done
+            kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null
+        fi
+        rm -f "${PID_FILE}"
+        log "--- stopped"
+    fi
+    return 0
+}
+
+case "$1" in
+    start)
+        start_daemon
+        exit $?
+        ;;
+    stop)
+        stop_daemon
+        exit $?
+        ;;
+    status)
+        # DSM reads these exit codes literally:
+        #   0 = running, 1 = dead but pid file present, 2 = dead but lock file
+        #   present, 3 = not running, 4 = unknown, 150 = broken.
+        # Returning 1 for a stopped package is what made Package Center show
+        # "Error" instead of "Stopped" - 1 means crashed, not idle.
+        if daemon_status; then
+            exit 0
+        fi
+        if [ -r "${PID_FILE}" ]; then
+            exit 1          # stale pid file: the process really did die
+        fi
+        exit 3              # cleanly stopped
+        ;;
+    log)
+        echo "${LOG_FILE}"
+        exit 0
+        ;;
+    *)
+        echo "usage: $0 {start|stop|status|log}" >&2
+        exit 1
+        ;;
+esac

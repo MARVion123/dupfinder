@@ -1,0 +1,10 @@
+#!/bin/sh
+# DSM creates and owns /var/packages/dupfinder/var, which is also what
+# dupfinder.config.DEFAULT_DATA_DIR points at.
+#
+# Deliberately does nothing to that directory: install scripts may run as root,
+# so creating or chmod-ing it here can leave it owned by root and unwritable
+# for the package user the service actually runs as - which shows up later as
+# a package that installs fine and then fails to start.
+
+exit 0

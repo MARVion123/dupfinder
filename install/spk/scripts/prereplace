@@ -1,0 +1,8 @@
+#!/bin/sh
+# Nothing to migrate: the database and config live in the package's var
+# directory, which survives a replace untouched.
+#
+# Present on purpose even though it does nothing. DSM takes the replace path
+# whenever a previous (including a broken) install of this package exists, and
+# a missing script in that path surfaces as "failed to acquire postinst worker".
+exit 0

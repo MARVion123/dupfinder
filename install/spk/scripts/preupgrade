@@ -1,0 +1,4 @@
+#!/bin/sh
+# Config and database live in the package's var directory and are kept across
+# upgrades, so there is nothing to back up here.
+exit 0
