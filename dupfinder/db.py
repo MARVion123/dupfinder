@@ -115,6 +115,23 @@ CREATE TABLE IF NOT EXISTS hash_cache (
     dhash  TEXT,
     seen_at REAL NOT NULL
 );
+
+-- The byte-for-byte comparison is the most expensive thing a repeat scan does,
+-- and it was the only pass without a cache: on an unchanged tree it re-read
+-- every duplicate pair in full, every time. A pair is remembered only together
+-- with both files' size and mtime, so any edit to either side invalidates the
+-- entry - the same assumption hash_cache already makes.
+CREATE TABLE IF NOT EXISTS verify_cache (
+    a_path  TEXT NOT NULL,
+    a_size  INTEGER NOT NULL,
+    a_mtime REAL NOT NULL,
+    b_path  TEXT NOT NULL,
+    b_size  INTEGER NOT NULL,
+    b_mtime REAL NOT NULL,
+    same    INTEGER NOT NULL,
+    seen_at REAL NOT NULL,
+    PRIMARY KEY (a_path, b_path)
+);
 """
 
 
@@ -184,3 +201,53 @@ class Database:
 
     def cache_invalidate(self, path: str):
         self.execute("DELETE FROM hash_cache WHERE path=?", (path,))
+        self.execute("DELETE FROM verify_cache WHERE a_path=? OR b_path=?",
+                     (path, path))
+
+    # -- byte-comparison cache -----------------------------------------
+    # Pairs are stored with the lexicographically smaller path first, so
+    # (a, b) and (b, a) are the same row and one lookup answers both.
+    @staticmethod
+    def _pair(a_path, a_size, a_mtime, b_path, b_size, b_mtime):
+        if a_path <= b_path:
+            return (a_path, a_size, a_mtime, b_path, b_size, b_mtime)
+        return (b_path, b_size, b_mtime, a_path, a_size, a_mtime)
+
+    def verify_get(self, a_path, a_size, a_mtime, b_path, b_size, b_mtime):
+        """True/False if this exact pair was compared before, else None."""
+        key = self._pair(a_path, a_size, a_mtime, b_path, b_size, b_mtime)
+        row = self.one(
+            "SELECT same FROM verify_cache WHERE a_path=? AND a_size=? "
+            "AND abs(a_mtime-?) < 0.001 AND b_path=? AND b_size=? "
+            "AND abs(b_mtime-?) < 0.001",
+            key,
+        )
+        return None if row is None else bool(row["same"])
+
+    def verify_row(self, a_path, a_size, a_mtime, b_path, b_size, b_mtime, same):
+        """One row for verify_put_many, ordered and ready to insert."""
+        return self._pair(a_path, a_size, a_mtime, b_path, b_size, b_mtime) + (
+            1 if same else 0, time.time())
+
+    def verify_put_many(self, rows):
+        """Insert a batch of comparison results in one transaction.
+
+        Written in batches rather than one row at a time: a first scan produces
+        one result per compared pair, and committing each of them separately
+        cost more than the comparisons it was trying to save.
+        """
+        if not rows:
+            return
+        conn = self.connect()
+        with self.write_lock:
+            conn.executemany(
+                """INSERT INTO verify_cache
+                       (a_path,a_size,a_mtime,b_path,b_size,b_mtime,same,seen_at)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(a_path,b_path) DO UPDATE SET
+                     a_size=excluded.a_size, a_mtime=excluded.a_mtime,
+                     b_size=excluded.b_size, b_mtime=excluded.b_mtime,
+                     same=excluded.same, seen_at=excluded.seen_at""",
+                rows,
+            )
+            conn.commit()
