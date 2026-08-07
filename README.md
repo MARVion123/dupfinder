@@ -340,7 +340,7 @@ dupfinder/
   actions.py    quarantine / recycle / delete / restore, all logged
   server.py     JSON API + static file serving
   static/       the UI (no build step)
-LICENSE         MIT
+LICENSE         PolyForm Noncommercial 1.0.0
 install/        systemd unit, DSM installer, Dockerfile, compose file
   deploy.sh     git pull -> verify -> swap -> health check -> roll back
   spk/          Synology package sources + build_spk.py
@@ -351,6 +351,19 @@ tests/ui/       headless-browser smoke test (Playwright)
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Use it, change it, ship it; keep the copyright
-notice. No warranty: the first scan belongs on a folder whose loss would not
+**PolyForm Noncommercial 1.0.0** — see [LICENSE](LICENSE).
+
+Free for any noncommercial purpose: personal use, hobby projects, study,
+research, and use inside charities, schools, public research bodies and
+government. You may modify it and pass your changes on, as long as the licence
+travels with them.
+
+What it does **not** allow is commercial use or selling it, in any form,
+without written permission from the copyright holder. Ask if you want that.
+
+Note that this makes the project source-available rather than open source: a
+restriction on the field of use is incompatible with the Open Source
+Definition, so GitHub will not recognise it as an OSS licence.
+
+No warranty, as before: the first scan belongs on a folder whose loss would not
 hurt.
