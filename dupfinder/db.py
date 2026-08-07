@@ -116,6 +116,17 @@ CREATE TABLE IF NOT EXISTS hash_cache (
     seen_at REAL NOT NULL
 );
 
+-- Directory mtimes from the last completed scan, for the quick rescan. A
+-- directory's mtime changes whenever an entry is added, removed or renamed -
+-- but NOT when a file's contents change, which is exactly the trade the quick
+-- rescan makes and why it is opt-in.
+CREATE TABLE IF NOT EXISTS dir_cache (
+    path    TEXT PRIMARY KEY,
+    mtime   REAL NOT NULL,
+    scan_id INTEGER NOT NULL,
+    seen_at REAL NOT NULL
+);
+
 -- The byte-for-byte comparison is the most expensive thing a repeat scan does,
 -- and it was the only pass without a cache: on an unchanged tree it re-read
 -- every duplicate pair in full, every time. A pair is remembered only together
@@ -203,6 +214,27 @@ class Database:
         self.execute("DELETE FROM hash_cache WHERE path=?", (path,))
         self.execute("DELETE FROM verify_cache WHERE a_path=? OR b_path=?",
                      (path, path))
+
+    # -- directory cache (quick rescan) --------------------------------
+    def dir_mtimes(self, scan_id: int) -> dict:
+        """path -> mtime for every directory that scan visited."""
+        return {r["path"]: r["mtime"] for r in self.query(
+            "SELECT path, mtime FROM dir_cache WHERE scan_id=?", (scan_id,))}
+
+    def dir_put_many(self, rows):
+        if not rows:
+            return
+        conn = self.connect()
+        with self.write_lock:
+            conn.executemany(
+                """INSERT INTO dir_cache(path,mtime,scan_id,seen_at)
+                   VALUES(?,?,?,?)
+                   ON CONFLICT(path) DO UPDATE SET
+                     mtime=excluded.mtime, scan_id=excluded.scan_id,
+                     seen_at=excluded.seen_at""",
+                rows,
+            )
+            conn.commit()
 
     # -- byte-comparison cache -----------------------------------------
     # Pairs are stored with the lexicographically smaller path first, so

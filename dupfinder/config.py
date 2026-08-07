@@ -59,6 +59,16 @@ DEFAULTS = {
     "max_size": 0,  # 0 = no limit
     "follow_symlinks": False,
     "cross_filesystem": True,
+    # Quick rescan. A directory whose mtime has not moved since the last
+    # completed scan had nothing added, removed or renamed, so its file list is
+    # taken from that scan instead of being stat'ed again.
+    #
+    # Off by default, and it must stay a deliberate choice: a directory's mtime
+    # does NOT change when the *contents* of a file inside it change. Only turn
+    # it on for a library where files are added and removed but never edited in
+    # place - a photo or media archive. On anything you edit, a changed file
+    # would keep its old hash and quietly stay in the wrong group.
+    "quick_rescan": False,
     # Byte-for-byte confirmation of every MD5 match. Slower, but turns a
     # "same hash" claim into a proof. On by default because deletion is final.
     "verify_bytes": True,

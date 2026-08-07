@@ -64,6 +64,10 @@ def cmd_scan(args, config):
         options["near_duplicates"] = False
     if args.threshold:
         options["near_threshold"] = args.threshold
+    if args.quick:
+        options["quick_rescan"] = True
+    if args.no_quick:
+        options["quick_rescan"] = False
 
     scan_id = engine.start(args.path, options)
     print("scan #%d  %s" % (scan_id, args.path))
@@ -166,6 +170,11 @@ def main(argv=None):
     p.add_argument("--no-near", action="store_true",
                    help="skip the fuzzy near-duplicate pass")
     p.add_argument("--threshold", type=int, help="near-duplicate cutoff, 0-100")
+    p.add_argument("--quick", action="store_true",
+                   help="reuse folders whose mtime has not moved since the last "
+                        "completed scan; only safe if files are never edited in place")
+    p.add_argument("--no-quick", action="store_true",
+                   help="force a full re-index even if quick_rescan is configured on")
     p.add_argument("--no-suggest", action="store_true")
     p.set_defaults(func=cmd_scan)
 

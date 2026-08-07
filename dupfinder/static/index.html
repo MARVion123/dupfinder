@@ -144,6 +144,9 @@
       <label class="check"><input type="checkbox" id="optVerify" checked> Byte-for-byte verification of every match</label>
       <label class="check"><input type="checkbox" id="optNear" checked> Find near-duplicates (fuzzy + image similarity)</label>
       <label>Near-duplicate threshold <input id="optThreshold" type="number" min="40" max="99" value="70"> %</label>
+      <label class="check"><input type="checkbox" id="optQuick"> Quick rescan — trust unchanged folders
+        <span class="hint">Skips folders whose modification time has not moved since the last completed scan of this root. Only safe when files are added and removed but never edited in place.</span>
+      </label>
     </div>
     <div class="modal-actions">
       <button class="ghost" data-close>Cancel</button>
@@ -174,6 +177,7 @@
       </label>
       <label class="check"><input type="checkbox" id="setProtect"> Never delete the last copy of a group</label>
       <label class="check"><input type="checkbox" id="setImages"> Perceptual image matching (needs Pillow)</label>
+      <label class="check"><input type="checkbox" id="setQuick"> Quick rescan on by default</label>
       <label>Near-duplicates: MiB read per file <input id="setFuzzyMiB" type="number" min="0" max="4096" step="1">
         <span class="hint">0 = read every file in full. Fuzzy hashing runs at a few MiB/s, so this is what decides whether a scan over large files finishes in minutes or hours. Exact duplicates are never affected.</span>
       </label>

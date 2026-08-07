@@ -582,7 +582,8 @@
       options: {
         verify_bytes: $("optVerify").checked,
         near_duplicates: $("optNear").checked,
-        near_threshold: Number($("optThreshold").value) || 70
+        near_threshold: Number($("optThreshold").value) || 70,
+        quick_rescan: $("optQuick").checked
       }
     };
     api("/api/scan", { method: "POST", body: body }).then(function (r) {
@@ -665,6 +666,7 @@
       $("setDelMode").value = c.delete_mode;
       $("setProtect").checked = !!c.protect_last_copy;
       $("setImages").checked = !!c.image_similarity;
+      $("setQuick").checked = !!c.quick_rescan;
       $("setFuzzyMiB").value = Math.round((c.fuzzy_max_bytes || 0) / 1048576);
       $("setSkipExts").value = (c.fuzzy_skip_exts || []).join("\n");
       $("setExcludes").value = (c.exclude_dirs || []).join("\n");
@@ -684,6 +686,7 @@
       delete_mode: $("setDelMode").value,
       protect_last_copy: $("setProtect").checked,
       image_similarity: $("setImages").checked,
+      quick_rescan: $("setQuick").checked,
       fuzzy_max_bytes: Math.max(0, Number($("setFuzzyMiB").value) || 0) * 1048576,
       fuzzy_skip_exts: $("setSkipExts").value.split("\n")
         .map(function (s) { return s.trim().toLowerCase(); })
