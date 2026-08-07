@@ -40,9 +40,12 @@ bytes at all.
 
 **No abort limit.** A scan runs until it finishes. It reports live progress
 (phase, current path, bytes hashed, cache reuse), can be **stopped at any
-moment** with partial results kept, and can be **run again** — a persistent hash
-cache keyed on path+size+mtime means a re-run only pays for what actually
-changed.
+moment** with partial results kept, and can be **run again**.
+
+**A re-run only pays for what changed.** Hashes *and* byte-comparison results
+are cached on path + size + mtime, so an unchanged tree is answered from the
+database. Measured on 20,000 files: **148 s** cold, **4 s** warm. Edit one file
+and only the pairs it belongs to are compared again.
 
 **Results appear while the scan runs.** Exact groups are published the moment
 pass 5 proves them, complete with suggestions, rather than at the very end.

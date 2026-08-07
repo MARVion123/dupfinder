@@ -457,32 +457,67 @@ class ScanEngine:
                 result.append((digest, False, ids))
             return result
 
-        paths = self._path_map([i for ids in md5_groups.values() for i in ids])
+        meta = self._verify_meta([i for ids in md5_groups.values() for i in ids])
+        pending: list = []
         for (digest, size), ids in md5_groups.items():
             self._abort_if_cancelled()
             # Split into byte-identical clusters. Almost always one cluster.
             clusters: list[list[int]] = []
             for fid in ids:
                 self._abort_if_cancelled()
-                path = paths.get(fid)
+                info = meta.get(fid)
+                path = info["path"] if info else None
                 self._set(current=path or "")
                 self._bump("done")
                 if not path or not os.path.exists(path):
                     continue
                 placed = False
                 for cluster in clusters:
-                    ref = paths.get(cluster[0])
-                    if ref and hashing.files_identical(ref, path, self._cancel):
+                    ref = meta.get(cluster[0])
+                    if not ref:
+                        continue
+                    if self._same_bytes(ref, info, pending):
                         cluster.append(fid)
                         placed = True
                         break
                 if not placed:
                     clusters.append([fid])
+                if len(pending) >= BATCH:
+                    self.db.verify_put_many(pending)
+                    pending = []
             for i, cluster in enumerate(clusters):
                 if len(cluster) > 1:
                     sig = digest if i == 0 else "%s#%d" % (digest, i)
                     result.append((sig, True, cluster))
+        self.db.verify_put_many(pending)
         return result
+
+    def _verify_meta(self, ids):
+        """path, size and mtime per file id - the key material for the cache."""
+        out = {}
+        for row in self._iter_files(ids, "id,path,size,mtime"):
+            out[row["id"]] = {"path": row["path"], "size": row["size"],
+                              "mtime": row["mtime"]}
+        return out
+
+    def _same_bytes(self, a, b, pending) -> bool:
+        """Byte-for-byte comparison, remembered across scans.
+
+        The proof itself is not weakened: a cached answer is only reused while
+        both files still carry the size and mtime they had when it was taken.
+        Any edit to either side changes one of those and the pair is compared
+        again - exactly the assumption the hash cache already rests on.
+        """
+        cached = self.db.verify_get(a["path"], a["size"], a["mtime"],
+                                    b["path"], b["size"], b["mtime"])
+        if cached is not None:
+            self._bump("cache_hits")
+            return cached
+        same = hashing.files_identical(a["path"], b["path"], self._cancel)
+        pending.append(self.db.verify_row(
+            a["path"], a["size"], a["mtime"],
+            b["path"], b["size"], b["mtime"], same))
+        return same
 
     # ---- phase 6: fuzzy / near duplicates ---------------------------
     def _pick_fuzzy_candidates(self, rows, redundant, want_images, unlimited,
@@ -790,8 +825,3 @@ class ScanEngine:
             ):
                 yield row
 
-    def _path_map(self, ids):
-        out = {}
-        for row in self._iter_files(list(ids), "id,path"):
-            out[row["id"]] = row["path"]
-        return out
