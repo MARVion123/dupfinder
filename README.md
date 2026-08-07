@@ -336,8 +336,17 @@ dupfinder/
   actions.py    quarantine / recycle / delete / restore, all logged
   server.py     JSON API + static file serving
   static/       the UI (no build step)
+LICENSE         MIT
 install/        systemd unit, DSM installer, Dockerfile, compose file
   deploy.sh     git pull -> verify -> swap -> health check -> roll back
   spk/          Synology package sources + build_spk.py
 tests/ui/       headless-browser smoke test (Playwright)
 ```
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE). Use it, change it, ship it; keep the copyright
+notice. No warranty: the first scan belongs on a folder whose loss would not
+hurt.
