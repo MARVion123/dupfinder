@@ -27,7 +27,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 PKG_NAME = "dupfinder"
-BUILD_NUMBER = "0008"
+BUILD_NUMBER = "0009"
+
+# Bisection mode. Every attempt at this package so far failed at the same
+# stage with the same useless message, and four guesses at the cause were all
+# wrong. --minimal builds the leanest package DSM will accept - no firewall
+# registration, no resource file, no Open button - so the extras can be added
+# back one at a time until one of them breaks it. Guessing had its turn.
+MINIMAL = "--minimal" in sys.argv
 
 # The single source of truth for the port. Substituted into INFO (so Package
 # Center's "Open" button points at it), into conf/dupfinder.sc (so DSM opens
@@ -70,11 +77,10 @@ def build_info(version: str) -> str:
         ("silent_uninstall", "no"),
         ("support_center", "no"),
         ("beta", "no"),
-        # Gives Package Center an "Open" button pointing at the web UI.
-        ("adminprotocol", "http"),
-        ("adminport", PORT),
-        ("adminurl", "/"),
     ]
+    if not MINIMAL:
+        # Gives Package Center an "Open" button pointing at the web UI.
+        fields += [("adminprotocol", "http"), ("adminport", PORT), ("adminurl", "/")]
     return "".join('%s="%s"\n' % (key, value) for key, value in fields)
 
 
@@ -187,7 +193,8 @@ def main() -> int:
     version = read_version()
     dist = os.path.join(HERE, "dist")
     os.makedirs(dist, exist_ok=True)
-    spk_path = os.path.join(dist, "%s-%s-%s.spk" % (PKG_NAME, version, BUILD_NUMBER))
+    suffix = BUILD_NUMBER + ("min" if MINIMAL else "")
+    spk_path = os.path.join(dist, "%s-%s-%s.spk" % (PKG_NAME, version, suffix))
 
     tmp = tempfile.mkdtemp(prefix="spk-")
     try:
@@ -232,12 +239,18 @@ def main() -> int:
                 add_file("scripts/" + name,
                          os.path.join(HERE, "scripts", name), mode=0o755)
 
-            for name in ("privilege", "resource", "dupfinder.sc"):
+            # privilege is the only conf file DSM genuinely needs. resource
+            # and the .sc file exist to register the port with the firewall,
+            # and that registration happens in the very stage where every
+            # install has been dying.
+            conf = ["privilege"] if MINIMAL else ["privilege", "resource", "dupfinder.sc"]
+            for name in conf:
                 add_file("conf/" + name, os.path.join(HERE, "conf", name))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    print("built %s (%.1f KiB)" % (spk_path, os.path.getsize(spk_path) / 1024.0))
+    print("built %s (%.1f KiB)%s" % (spk_path, os.path.getsize(spk_path) / 1024.0,
+                                     "  [minimal]" if MINIMAL else ""))
     return 0
 
 
