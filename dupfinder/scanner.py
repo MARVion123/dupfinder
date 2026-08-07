@@ -19,6 +19,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -260,7 +261,11 @@ class ScanEngine:
     def _walk(self, scan_id, root, opts):
         self._phase("walk")
         excludes = set(self.config["exclude_dirs"])
-        globs = list(self.config["exclude_globs"])
+        # One compiled pattern instead of a loop of fnmatch calls. The loop ran
+        # five times per file and cost more than reading the directory did.
+        globs = [g for g in self.config["exclude_globs"] if g]
+        excluded_name = re.compile(
+            "|".join("(?:%s)" % fnmatch.translate(g) for g in globs)).match if globs else None
         min_size = int(opts.get("min_size") or 0)
         max_size = int(opts.get("max_size") or 0)
         follow = bool(opts.get("follow_symlinks"))
@@ -274,10 +279,15 @@ class ScanEngine:
             self._abort_if_cancelled()
             current = stack.pop()
             try:
-                real = os.path.realpath(current)
-                if real in visited_dirs:
+                # Loop protection by (device, inode) rather than realpath.
+                # realpath resolves every component of every path and was the
+                # second most expensive thing in this pass; a directory's
+                # identity is one stat away.
+                st = os.stat(current)
+                key = (st.st_dev, st.st_ino)
+                if key in visited_dirs:
                     continue
-                visited_dirs.add(real)
+                visited_dirs.add(key)
                 entries = list(os.scandir(current))
             except (OSError, PermissionError):
                 continue
@@ -295,7 +305,7 @@ class ScanEngine:
                         continue
                     if not entry.is_file(follow_symlinks=follow):
                         continue
-                    if any(fnmatch.fnmatch(entry.name, g) for g in globs):
+                    if excluded_name is not None and excluded_name(entry.name):
                         continue
                     stat = entry.stat(follow_symlinks=follow)
                 except (OSError, PermissionError):
