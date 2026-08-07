@@ -113,6 +113,7 @@ class ScanEngine:
             "finished_at": None,
             "error": None,
             "cache_hits": 0,
+            "reused_dirs": 0,
         }
 
     # -- public API ----------------------------------------------------
@@ -145,6 +146,7 @@ class ScanEngine:
             "min_size": self.config["min_size"],
             "max_size": self.config["max_size"],
             "follow_symlinks": self.config["follow_symlinks"],
+            "quick_rescan": self.config["quick_rescan"],
         }
         opts.update(options or {})
 
@@ -162,7 +164,7 @@ class ScanEngine:
                 files_seen=0, bytes_seen=0, files_hashed=0, bytes_hashed=0,
                 todo=0, done=0, groups_found=0, wasted_bytes=0,
                 started_at=time.time(), finished_at=None, error=None,
-                cache_hits=0,
+                cache_hits=0, reused_dirs=0,
             )
         self._thread = threading.Thread(
             target=self._run, args=(scan_id, root, opts), daemon=True,
@@ -270,8 +272,19 @@ class ScanEngine:
         max_size = int(opts.get("max_size") or 0)
         follow = bool(opts.get("follow_symlinks"))
 
+        # Quick rescan: a directory whose mtime is unchanged since the last
+        # completed scan of this root had nothing added, removed or renamed, so
+        # its file list is taken from that scan instead of being stat'ed again.
+        # Off unless asked for, because an mtime says nothing about the
+        # *contents* of the files inside - see _previous_scan.
+        prev_scan = self._previous_scan(scan_id, root) if opts.get("quick_rescan") else None
+        known = self.db.dir_mtimes(prev_scan) if prev_scan else {}
+        reused_dirs = 0
+
         seen_inodes = set()
         batch = []
+        dir_rows = []
+        reuse: list[str] = []
         stack = [root]
         visited_dirs = set()
 
@@ -292,6 +305,22 @@ class ScanEngine:
             except (OSError, PermissionError):
                 continue
 
+            dir_rows.append((current, st.st_mtime, scan_id, time.time()))
+            if len(dir_rows) >= BATCH:
+                self.db.dir_put_many(dir_rows)
+                dir_rows = []
+
+            unchanged = (prev_scan is not None
+                         and abs(known.get(current, -1) - st.st_mtime) < 0.001)
+            if unchanged:
+                # Remember it and copy the files forward in bulk after the walk.
+                # Doing it per directory meant two statements and a commit for
+                # each one, which cost more than the stat calls it was saving.
+                # The sub-directories are still walked either way: a change
+                # three levels down does not touch this directory's mtime.
+                reuse.append(current)
+                reused_dirs += 1
+
             self._set(current=current)
             for entry in entries:
                 self._abort_if_cancelled()
@@ -303,6 +332,8 @@ class ScanEngine:
                             continue
                         stack.append(entry.path)
                         continue
+                    if unchanged:
+                        continue          # already carried over, no stat needed
                     if not entry.is_file(follow_symlinks=follow):
                         continue
                     if excluded_name is not None and excluded_name(entry.name):
@@ -337,6 +368,48 @@ class ScanEngine:
                     batch = []
         if batch:
             self._flush_files(batch)
+        self.db.dir_put_many(dir_rows)
+        if prev_scan is not None:
+            self._carry_over(scan_id, prev_scan, reuse)
+            self._set(reused_dirs=reused_dirs)
+
+    def _previous_scan(self, scan_id, root):
+        """The last scan of this exact root that ran to completion.
+
+        Only 'done' counts: a cancelled scan holds a partial index, and
+        carrying that forward would silently drop files.
+        """
+        row = self.db.one(
+            "SELECT id FROM scans WHERE root=? AND state='done' AND id<? "
+            "ORDER BY id DESC LIMIT 1", (root, scan_id))
+        return row["id"] if row else None
+
+    def _carry_over(self, scan_id, prev_scan, parents):
+        """Copy the file rows of every unchanged directory in one go.
+
+        Chunked only to stay under SQLite's limit on bound parameters; the
+        point is that this is a handful of statements rather than two per
+        directory.
+        """
+        if not parents:
+            return
+        for i in range(0, len(parents), 400):
+            self._abort_if_cancelled()
+            chunk = parents[i:i + 400]
+            marks = ",".join("?" * len(chunk))
+            self.db.execute(
+                """INSERT OR IGNORE INTO files
+                       (scan_id,path,parent,name,ext,size,mtime,dev,inode)
+                   SELECT ?,path,parent,name,ext,size,mtime,dev,inode
+                   FROM files
+                   WHERE scan_id=? AND status='present' AND parent IN (%s)""" % marks,
+                (scan_id, prev_scan, *chunk),
+            )
+        row = self.db.one(
+            "SELECT COUNT(*) c, COALESCE(SUM(size),0) b FROM files WHERE scan_id=?",
+            (scan_id,))
+        if row:
+            self._set(files_seen=row["c"], bytes_seen=row["b"])
 
     def _flush_files(self, batch):
         self.db.executemany(

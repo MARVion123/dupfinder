@@ -210,6 +210,7 @@ The defaults that matter:
 | `near_threshold` | `70` | Similarity cutoff for reporting a near pair. |
 | `fuzzy_max_bytes` | `4194304` | Bytes read per file for the fuzzy hash; `0` reads every file in full. CTPH is pure Python at ~2.5 MiB/s, so this single number decides whether a scan over films takes minutes or hours. Measured on ten films present twice in different containers: every pair is still found at 1 MiB, because a remux shares its payload from just past the header onward. Halve it to halve the time. Exact duplicates go through the full MD5 plus a byte-for-byte comparison and are unaffected. |
 | `fuzzy_skip_exts` | *empty* | Extensions that skip the fuzzy pass entirely. Worth filling in with your video extensions if you have thousands of films and do not care about finding the same one in two containers. |
+| `quick_rescan` | `false` | Reuse the file list of any folder whose mtime has not moved since the last completed scan of that root. **Only for libraries where files are added and removed but never edited in place** — a folder's mtime does not change when the contents of a file inside it change, so an edited file would keep its old hash. Toggled per scan in the scan dialog, or set as the default in Settings. |
 | `delete_mode` | `quarantine` | `quarantine` \| `recycle` \| `permanent`. |
 | `protect_last_copy` | `true` | Refuse any selection that would empty a group. |
 | `dry_run` | `false` | Rehearsal mode. Every check runs and the log fills up, but no file is touched. Toggled from the action bar with *Simulate only*, and it sticks. |
