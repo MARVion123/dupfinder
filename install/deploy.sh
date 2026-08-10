@@ -13,7 +13,13 @@ set -e
 
 REPO_URL=${REPO_URL:-https://github.com/MARVion123/dupfinder.git}
 BRANCH=${BRANCH:-main}
-SRC=${SRC:-/volume1/apps/src/dupfinder}     # the git working copy
+# The git working copy: where this script lives, two levels up. Deriving it
+# rather than hardcoding a path means the whole tree can be moved or renamed
+# and the next run still finds itself. DSM renaming /volume1/apps to
+# /volume1/apps_0 on a reboot is exactly the case that made this necessary -
+# and a hardcoded path here would have been reset by the very git checkout it
+# performs, breaking the run after the one that fixed it.
+SRC=${SRC:-$(cd "$(dirname "$0")/.." && pwd)}
 SERVICE=${SERVICE:-dupfinder}
 UNIT=/etc/systemd/system/${SERVICE}.service
 

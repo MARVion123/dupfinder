@@ -7,6 +7,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# Adjust this path if the checkout lives elsewhere. The script itself
+# derives everything else from its own location.
 ExecStart=/volume1/apps/src/dupfinder/install/deploy.sh
 # Nothing to do is the normal outcome, so let the run be quiet unless the
 # script actually says something.
