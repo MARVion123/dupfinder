@@ -74,6 +74,18 @@ usable offline.
   restorable with one click from the action log.
 - **Recycle** — moved to the DSM share recycle bin (`#recycle`).
 - **Permanent** — unlinked.
+- **Cross-reference** — replaced by a hard link to an identical copy. The space
+  is reclaimed, **every path keeps working**, and nothing disappears from any
+  folder. Only ever applied to files proven byte-identical, on the same volume,
+  and never to the last remaining copy.
+
+**Folders holding the same files.** The per-file view hides the shape of the
+problem: two hundred rows saying "this clip is in two places" are often one
+fact, that `.../Video` and `.../Videos` are the same folder twice. The
+**Folders** view aggregates the groups back up to folder pairs, and lifts pairs
+whose names *mean* the same thing — singular/plural, `pic`/`pictures`,
+`Bilder`/`Pics`, `backup`/`Sicherung` — above pairs that merely happen to
+overlap.
 
 A group can never be emptied: if you select every copy, the last one is kept
 and reported as skipped. Every move and delete is logged with source,

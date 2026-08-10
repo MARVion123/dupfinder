@@ -10,6 +10,7 @@ import os
 import shutil
 import time
 
+from .hashing import files_identical
 from .safety import check_allowed, UnsafePath
 
 TRASH_DIRNAME = ".dupfinder-trash"
@@ -79,9 +80,11 @@ class ActionRunner:
         code path, so what it reports is what a real run would do.
         """
         mode = mode or self.config["delete_mode"]
-        if mode not in ("quarantine", "recycle", "permanent"):
+        if mode not in ("quarantine", "recycle", "permanent", "link"):
             raise ValueError("Unknown delete mode: %s" % mode)
         roots = self.config["roots_allowlist"]
+        if mode == "link":
+            return self.link_files(file_ids, dry_run=dry_run)
 
         results = {"deleted": [], "skipped": [], "failed": [],
                    "freed_bytes": 0, "mode": mode, "dry_run": bool(dry_run)}
@@ -145,6 +148,152 @@ class ActionRunner:
             results["freed_bytes"] += size or 0
 
         return results
+
+    # -- cross-reference instead of deletion -----------------------------
+    def link_files(self, file_ids: list[int], dry_run: bool = False) -> dict:
+        """Replace each selected file with a hard link to an identical twin.
+
+        The bytes exist once on disk and remain reachable under every path, so
+        the space is reclaimed without anything disappearing from any folder.
+
+        Hard links rather than symbolic ones: a symbolic link breaks the moment
+        its target is moved or renamed, and SMB clients treat it inconsistently.
+        A hard link is the same file under two names - neither is "the
+        original", and deleting one name leaves the other untouched.
+
+        Not reflinks (copy-on-write clones), even though DSM's Btrfs volumes
+        support them: a reflinked pair stays two independent inodes, so the very
+        next scan would find them as duplicates again and offer to reclaim space
+        that is already shared. A hard link raises the link count, and the
+        indexing pass already collapses those - the pair simply stops being
+        reported, which is the truth.
+        """
+        results = {"deleted": [], "skipped": [], "failed": [],
+                   "freed_bytes": 0, "mode": "link", "dry_run": bool(dry_run)}
+        if not file_ids:
+            return results
+        roots = self.config["roots_allowlist"]
+        requested = set(file_ids)
+
+        marks = ",".join("?" * len(file_ids))
+        rows = self.db.query(
+            "SELECT id,scan_id,path,size,mtime,status FROM files WHERE id IN (%s)" % marks,
+            tuple(file_ids),
+        )
+        for missing in requested - {r["id"] for r in rows}:
+            results["failed"].append({"file_id": missing, "message": "Unknown file id"})
+
+        for row in rows:
+            fid, path, size = row["id"], row["path"], row["size"]
+            if row["status"] != "present":
+                results["skipped"].append(
+                    {"file_id": fid, "path": path, "message": "Already %s" % row["status"]})
+                continue
+
+            twin = self._twin(row, requested)
+            if twin is None:
+                results["skipped"].append(
+                    {"file_id": fid, "path": path,
+                     "message": "No surviving copy to point at - keep at least one "
+                                "file in the group unselected"})
+                continue
+
+            try:
+                dst = check_allowed(path, roots)
+                src = check_allowed(twin["path"], roots)
+                message = self._link_check(src, dst, row, twin)
+            except UnsafePath as exc:
+                results["failed"].append({"file_id": fid, "path": path, "message": str(exc)})
+                continue
+            if message:
+                results["skipped"].append({"file_id": fid, "path": path, "message": message})
+                continue
+
+            if dry_run:
+                self._log(row, "link", dst, src, True,
+                          "Simulated - nothing was linked", True)
+            else:
+                try:
+                    self._hardlink(src, dst)
+                except Exception as exc:  # noqa: BLE001
+                    self._log(row, "link", dst, src, False, str(exc))
+                    results["failed"].append(
+                        {"file_id": fid, "path": path, "message": str(exc)})
+                    continue
+                self.db.execute("UPDATE files SET status='linked' WHERE id=?", (fid,))
+                self.db.cache_invalidate(dst)
+                self._log(row, "link", dst, src, True,
+                          "Now a hard link to %s" % src)
+            results["deleted"].append({"file_id": fid, "path": path, "moved_to": src})
+            results["freed_bytes"] += size or 0
+
+        return results
+
+    def _twin(self, row, requested):
+        """A file in one of this file's groups that will still be there after."""
+        rows = self.db.query(
+            """SELECT f.id, f.path, f.size, f.mtime
+               FROM group_members m
+               JOIN group_members o ON o.group_id = m.group_id
+               JOIN files f ON f.id = o.file_id
+               WHERE m.file_id = ? AND f.id != ? AND f.status = 'present'
+               ORDER BY f.id""",
+            (row["id"], row["id"]),
+        )
+        for candidate in rows:
+            if candidate["id"] not in requested:
+                return candidate
+        return None
+
+    def _link_check(self, src, dst, row, twin) -> str | None:
+        """Everything that must hold before one file replaces another.
+        Returns a reason to skip, or None when it is safe."""
+        try:
+            s_stat, d_stat = os.stat(src), os.stat(dst)
+        except OSError as exc:
+            return str(exc)
+        if s_stat.st_dev != d_stat.st_dev:
+            return ("The two copies live on different volumes - a hard link "
+                    "cannot span them")
+        if s_stat.st_ino == d_stat.st_ino:
+            return "Already the same file on disk"
+        if s_stat.st_size != d_stat.st_size:
+            return "Sizes no longer match - the files changed since the scan"
+        # The whole point is that nothing is lost, so identity is proven here
+        # and not taken from the group. The cache answers instantly when the
+        # verification pass already compared this exact pair.
+        cached = self.db.verify_get(src, s_stat.st_size, s_stat.st_mtime,
+                                    dst, d_stat.st_size, d_stat.st_mtime)
+        if cached is None:
+            cached = files_identical(src, dst)
+            self.db.verify_put(src, s_stat.st_size, s_stat.st_mtime,
+                               dst, d_stat.st_size, d_stat.st_mtime, cached)
+        if not cached:
+            return "The two files are not byte-identical - refusing to link them"
+        return None
+
+    @staticmethod
+    def _hardlink(src, dst):
+        """Point dst at src's data without dst ever ceasing to exist.
+
+        The link is made under a temporary name in the same directory and then
+        renamed over the target, so a failure at any point leaves the original
+        file exactly where it was. Deleting the target first would open a window
+        in which the file is simply gone.
+        """
+        tmp = os.path.join(os.path.dirname(dst),
+                           ".dupfinder-link-%d.tmp" % os.getpid())
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        os.link(src, tmp)
+        try:
+            os.replace(tmp, dst)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
 
     def _target(self, path, mode, row, roots) -> str | None:
         """Where this file would go. Touches nothing."""

@@ -299,10 +299,15 @@
     var files = state.detail[g.id] || g.files || [];
     var rows = files.map(function (f) {
       var parts = splitPath(f.path);
-      var gone = f.status !== "present";
-      var tag = f.action
-        ? '<span class="tag ' + f.action + '">' + f.action + "</span>"
-        : "";
+      // "linked" is not gone: the file is still there and still opens,
+      // its bytes are just shared now. Striking it through would be a lie.
+      var linked = f.status === "linked";
+      var gone = f.status !== "present" && !linked;
+      var tag = linked
+        ? '<span class="tag linked" title="Shares its bytes with an identical copy - no extra space, every path still works">⇄ linked</span>'
+        : (f.action
+          ? '<span class="tag ' + f.action + '">' + f.action + "</span>"
+          : "");
       var thumb = f.is_image && !gone
         ? '<img class="thumb" loading="lazy" alt="" src="' + thumbUrl(f.id) + '"' +
           ' onerror="this.classList.add(\'broken\')">'
@@ -310,7 +315,7 @@
       return "<tr>" +
         '<td style="width:28px"><input type="checkbox" class="pick-file" data-fid=' + f.id +
           ' data-size=' + f.size + ' data-path="' + esc(f.path) + '"' +
-          (state.selected[f.id] ? " checked" : "") + (gone ? " disabled" : "") + "></td>" +
+          (state.selected[f.id] ? " checked" : "") + (gone || linked ? " disabled" : "") + "></td>" +
         '<td class="fpath' + (gone ? " gone" : "") + '"><div class="fwrap">' + thumb +
           '<div class="ftext"><span class="fdir">' + esc(parts[0]) +
           '</span><span class="fname">' + esc(parts[1]) + "</span>" +
@@ -497,7 +502,8 @@
       var wording = {
         quarantine: "moved into a .dupfinder-trash folder — you can restore them from the log",
         recycle: "moved into the DSM recycle bin of their share",
-        permanent: "deleted permanently and cannot be recovered"
+        permanent: "deleted permanently and cannot be recovered",
+        link: "replaced by a cross-reference to an identical copy — every path keeps working, the bytes exist only once"
       }[mode];
       var n = ids.length + " file" + (ids.length === 1 ? "" : "s");
       var ask = state.dryRun
@@ -556,6 +562,7 @@
 
     $("btnSettings").addEventListener("click", openSettings);
     $("btnSaveSettings").addEventListener("click", saveSettings);
+    $("btnFolders").addEventListener("click", openFolders);
     $("btnLog").addEventListener("click", openLog);
     $("btnEmptyTrash").addEventListener("click", function () {
       confirmThen("Empty quarantine?",
@@ -567,7 +574,35 @@
         });
     });
 
-    document.addEventListener("click", function (ev) {
+    // ---------------------------------------------------------------- folders
+  function openFolders() {
+    api("/api/folders?scan_id=" + (state.scanId || "")).then(function (data) {
+      var body = $("folderBody");
+      body.innerHTML = "";
+      if (!data.pairs || !data.pairs.length) {
+        body.innerHTML = '<tr><td class="muted" colspan="4">No folder shares anything with another folder in this scan.</td></tr>';
+      }
+      (data.pairs || []).forEach(function (p) {
+        var tr = document.createElement("tr");
+        tr.className = "folder-pair" + (p.related ? " kin" : "");
+        tr.dataset.a = p.a;
+        tr.innerHTML =
+          '<td class="fpath">' +
+            (p.related ? '<span class="tag kin" title="' + esc(p.why) + '">\u21c4 same thing, twice</span> ' : "") +
+            '<div class="pairline">' + esc(p.a) + '<span class="muted"> \u00b7 ' + fmtNum(p.a_files) + ' files</span></div>' +
+            '<div class="pairline">' + esc(p.b) + '<span class="muted"> \u00b7 ' + fmtNum(p.b_files) + ' files</span></div>' +
+            (p.related ? '<div class="reason">' + esc(p.why) + "</div>" : "") +
+          "</td>" +
+          '<td class="num">' + fmtNum(p.shared_files) + "</td>" +
+          '<td class="num">' + p.overlap + "%</td>" +
+          '<td class="num"><strong>' + fmtBytes(p.shared_bytes) + "</strong></td>";
+        body.appendChild(tr);
+      });
+      $("modalFolders").classList.remove("hidden");
+    }).catch(fail);
+  }
+
+  document.addEventListener("click", function (ev) {
       if (ev.target.hasAttribute("data-close") || ev.target.classList.contains("modal")) closeModals();
     });
     document.addEventListener("keydown", function (ev) {
@@ -737,6 +772,16 @@
   }
 
   document.addEventListener("click", function (ev) {
+    var pair = ev.target.closest && ev.target.closest("tr.folder-pair");
+    if (pair) {
+      // Jump straight to the groups behind this pair rather than leaving the
+      // reader to copy a path by hand.
+      $("fSearch").value = pair.dataset.a;
+      closeModals();
+      state.offset = 0;
+      loadGroups();
+      return;
+    }
     if (ev.target.classList && ev.target.classList.contains("act-restore")) {
       api("/api/restore", { method: "POST", body: { action_ids: [Number(ev.target.dataset.aid)] } })
         .then(function (r) {

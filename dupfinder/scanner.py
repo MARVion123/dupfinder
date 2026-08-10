@@ -83,6 +83,58 @@ def name_similarity(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, ca, cb).ratio()
 
 
+# Folder names that mean the same thing. Two folders called "Video" and
+# "Videos" holding the same files are almost always one folder that got split,
+# and that is worth flagging louder than a coincidental overlap.
+_FOLDER_SYNONYMS = [
+    {"pic", "pics", "picture", "pictures", "photo", "photos", "img", "imgs",
+     "image", "images", "bild", "bilder", "foto", "fotos"},
+    {"video", "videos", "vid", "vids", "movie", "movies", "film", "filme",
+     "clip", "clips"},
+    {"doc", "docs", "document", "documents", "dokument", "dokumente"},
+    {"backup", "backups", "sicherung", "sicherungen", "bak"},
+    {"download", "downloads", "dl"},
+    {"music", "musik", "audio", "songs", "song", "sound", "sounds"},
+    {"archive", "archives", "archiv", "archive alt", "old", "alt"},
+    {"new", "neu", "neue"},
+    {"tmp", "temp", "temporary"},
+]
+
+
+def _normalise_folder(name: str) -> str:
+    lowered = re.sub(r"[^a-z0-9]+", "", name.lower())
+    return re.sub(r"(e?s)$", "", lowered) or lowered
+
+
+def folder_kinship(a: str, b: str) -> tuple[bool, str]:
+    """Do these two folder names mean the same thing?
+
+    Returns (related, why). Used to lift a pair like Video/Videos above a pair
+    that merely happens to share files - the first is one folder that got
+    split, the second may be a deliberate copy.
+    """
+    name_a, name_b = os.path.basename(a), os.path.basename(b)
+    if not name_a or not name_b:
+        return False, ""
+    low_a, low_b = name_a.lower(), name_b.lower()
+    if low_a == low_b:
+        return True, "same name, different case or location"
+    norm_a, norm_b = _normalise_folder(name_a), _normalise_folder(name_b)
+    if norm_a and norm_a == norm_b:
+        return True, "singular and plural of the same word"
+    for group in _FOLDER_SYNONYMS:
+        if low_a in group and low_b in group:
+            return True, "two words for the same thing"
+        if norm_a in group and norm_b in group:
+            return True, "two words for the same thing"
+    if norm_a and norm_b and (norm_a.startswith(norm_b) or norm_b.startswith(norm_a)):
+        if abs(len(norm_a) - len(norm_b)) <= 4:
+            return True, "one name is the other with a suffix"
+    if name_similarity(name_a, name_b) >= 0.85:
+        return True, "near-identical names"
+    return False, ""
+
+
 class ScanEngine:
     """Owns the single active scan. Thread-safe."""
 

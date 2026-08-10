@@ -20,7 +20,7 @@ from .actions import ActionRunner
 from .ai import AIEngine, heuristic_suggestions
 from .db import Database
 from .safety import UnsafePath, available_roots, check_allowed
-from .scanner import ScanEngine
+from .scanner import ScanEngine, folder_kinship
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -102,6 +102,8 @@ class App:
                 return self.api_actions(query)
             if path == "/api/thumb":
                 return self.api_thumb(query)
+            if path == "/api/folders":
+                return self.api_folders(query)
             m = re.fullmatch(r"/api/group/(\d+)", path)
             if m:
                 return self.api_group(int(m.group(1)))
@@ -342,6 +344,62 @@ class App:
         if dry_run is None:
             dry_run = self.config["dry_run"]
         return self.actions.delete_files(file_ids, mode, dry_run=bool(dry_run))
+
+    def api_folders(self, query):
+        """Pairs of folders that hold the same files.
+
+        The per-file view hides the shape of the problem: two hundred rows
+        saying "this clip is in two places" are really one fact, that
+        .../Video and .../Videos are the same folder twice. This aggregates
+        the groups back up to the folder pairs that produced them.
+        """
+        scan_id = self._latest_scan_id(query)
+        if scan_id is None:
+            return {"pairs": [], "scan_id": None}
+        limit = min(int((query.get("limit") or ["60"])[0] or 60), 300)
+
+        rows = self.db.query(
+            """SELECT
+                 CASE WHEN fa.parent < fb.parent THEN fa.parent ELSE fb.parent END AS a,
+                 CASE WHEN fa.parent < fb.parent THEN fb.parent ELSE fa.parent END AS b,
+                 COUNT(*) AS shared_files,
+                 SUM(min(fa.size, fb.size)) AS shared_bytes
+               FROM group_members ma
+               JOIN group_members mb
+                 ON mb.group_id = ma.group_id AND mb.file_id > ma.file_id
+               JOIN files fa ON fa.id = ma.file_id
+               JOIN files fb ON fb.id = mb.file_id
+               JOIN groups g ON g.id = ma.group_id
+               WHERE g.scan_id = ? AND fa.parent <> fb.parent
+               GROUP BY a, b
+               ORDER BY shared_bytes DESC
+               LIMIT ?""",
+            (scan_id, limit),
+        )
+
+        totals = {r["parent"]: r["c"] for r in self.db.query(
+            "SELECT parent, COUNT(*) c FROM files WHERE scan_id=? GROUP BY parent",
+            (scan_id,))}
+
+        pairs = []
+        for row in rows:
+            a, b = row["a"], row["b"]
+            related, why = folder_kinship(a, b)
+            smaller = min(totals.get(a, 0), totals.get(b, 0)) or 1
+            pairs.append({
+                "a": a, "b": b,
+                "a_files": totals.get(a, 0), "b_files": totals.get(b, 0),
+                "shared_files": row["shared_files"],
+                "shared_bytes": row["shared_bytes"] or 0,
+                # How much of the smaller folder is already in the larger one.
+                # 100% means one folder is contained in the other.
+                "overlap": round(min(row["shared_files"] / smaller, 1.0) * 100),
+                "related": related, "why": why,
+            })
+        # Name kinship first: those are one folder that got split, which is a
+        # different problem from two folders that happen to share files.
+        pairs.sort(key=lambda p: (p["related"], p["shared_bytes"]), reverse=True)
+        return {"pairs": pairs, "scan_id": scan_id}
 
     def api_thumb(self, query):
         raw = (query.get("file_id") or [""])[0]

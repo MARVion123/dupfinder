@@ -22,6 +22,7 @@
     <button id="btnCancel" class="danger hidden">Stop scan</button>
     <button id="btnRescan" class="ghost hidden">Run again</button>
     <button id="btnSuggest" class="ghost">AI suggestions</button>
+    <button id="btnFolders" class="ghost" title="Folders that hold the same files">Folders</button>
     <button id="btnLog" class="ghost">Log</button>
     <button id="btnSettings" class="ghost" title="Settings">⚙</button>
   </div>
@@ -128,6 +129,7 @@
       <option value="quarantine">Move to quarantine (undoable)</option>
       <option value="recycle">Move to DSM recycle bin</option>
       <option value="permanent">Delete permanently</option>
+      <option value="link">Replace with a cross-reference (keeps every path)</option>
     </select>
     <button id="btnClearSel" class="ghost">Clear</button>
     <button id="btnDelete" class="danger">Delete selected</button>
@@ -173,6 +175,7 @@
           <option value="quarantine">quarantine</option>
           <option value="recycle">recycle</option>
           <option value="permanent">permanent</option>
+          <option value="link">cross-reference</option>
         </select>
       </label>
       <label class="check"><input type="checkbox" id="setProtect"> Never delete the last copy of a group</label>
@@ -191,6 +194,31 @@
     <div class="modal-actions">
       <button class="ghost" data-close>Close</button>
       <button id="btnSaveSettings" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalFolders" class="modal hidden">
+  <div class="modal-box wide">
+    <h2>Folders holding the same files</h2>
+    <p class="muted">Two hundred rows saying &ldquo;this clip is in two places&rdquo; are
+    often one fact: two folders are the same folder twice. Pairs whose names mean
+    the same thing are listed first.</p>
+    <div class="tablescroll">
+      <table class="grid" id="folderGrid">
+        <thead>
+          <tr>
+            <th>Folder pair</th>
+            <th class="num">Shared files</th>
+            <th class="num">Overlap</th>
+            <th class="num">Shared size</th>
+          </tr>
+        </thead>
+        <tbody id="folderBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" data-close>Close</button>
     </div>
   </div>
 </div>

@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS files (
     md5       TEXT,
     fuzzy     TEXT,
     dhash     TEXT,
-    status    TEXT DEFAULT 'present',     -- present|deleted|quarantined|missing
+    -- 'linked' means the file is still there and still readable, but its
+    -- bytes are now shared with an identical twin instead of duplicated.
+    status    TEXT DEFAULT 'present',     -- present|deleted|quarantined|missing|linked
     UNIQUE(scan_id, path)
 );
 CREATE INDEX IF NOT EXISTS idx_files_scan_size ON files(scan_id, size);
