@@ -163,8 +163,25 @@ it before the target: in *File Station → right-click the folder → Properties
 Permissions*, add `dupfinder` on each parent folder with at least **Traverse
 folders / List folders**, applied to *This folder*.
 
-Check the result rather than assuming it — this is one command and it answers
-the question directly:
+Or skip the clicking. `install/spk/grant-shares.sh` does the same thing through
+`synoshare`, and — the part that matters — asks the service user afterwards
+whether it worked:
+
+```sh
+sudo sh install/spk/grant-shares.sh --list           # what it can reach today
+sudo sh install/spk/grant-shares.sh photo video      # show what would change
+sudo sh install/spk/grant-shares.sh --apply photo video
+sudo sh install/spk/grant-shares.sh --check /volume1/photo/2019
+```
+
+It prints the state before and after and changes nothing without `--apply`.
+`synoshare --setuser` also takes an `=` operator that *replaces* a share's whole
+access list, which would drop every other user from it; the script never uses
+it. `--revoke` removes the user from the read/write and read-only lists rather
+than adding it to the no-access one — those are different edits, and only the
+first actually takes the access away.
+
+Whichever route you take, check the result rather than assuming it:
 
 ```sh
 sudo -u dupfinder ls "/volume1/<share>" >/dev/null && echo readable || echo denied
@@ -173,7 +190,7 @@ sudo -u dupfinder test -w "/volume1/<share>" && echo writable || echo "read-only
 
 If `ls` says denied, the permission did not take. The usual cause is a parent
 folder without traverse rights, or an ACL on the share that overrides the simple
-Read/Write tick.
+Read/Write tick — `synoshare --list_acl <share>` shows the latter.
 
 That restriction is the whole reason the systemd install below still exists. It
 runs as `root` and sees everything, at the cost of the Package Center tile.
