@@ -8,6 +8,9 @@
 #   sudo sh grant-shares.sh --apply --revoke photo     # take it back
 #   sudo sh grant-shares.sh --check /volume1/photo/2019
 #
+# Share names with spaces work: quote them.
+#   sudo sh grant-shares.sh --apply "Nino Arbeit" "Extern-Eigene Dateien"
+#
 # Why this exists: DSM 7 only lets Synology-signed packages run as root, so
 # this one runs as its own user and starts with access to nothing. Clicking
 # through Control Panel once per share is the documented way; this is the same
@@ -24,14 +27,19 @@ AUTH=RW
 OPERATOR="+"
 REVOKE=0
 APPLY=0
-CHECK_PATHS=""
-SHARES=""
 LIST_ONLY=0
+# Newline-separated, never space-separated: real share names contain spaces
+# ("Extern-Eigene Dateien"), and the first version of this script split those
+# into two shares that did not exist.
+SHARES=""
+CHECK_PATHS=""
+NL="
+"
 
 die() { echo "error: $*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
     exit ${1:-0}
 }
 
@@ -42,10 +50,10 @@ while [ $# -gt 0 ]; do
         --revoke) REVOKE=1; OPERATOR="-"; shift ;;
         --apply)  APPLY=1; shift ;;
         --list)   LIST_ONLY=1; shift ;;
-        --check)  CHECK_PATHS="${CHECK_PATHS} $2"; shift 2 ;;
+        --check)  CHECK_PATHS="${CHECK_PATHS}$2${NL}"; shift 2 ;;
         -h|--help) usage 0 ;;
         -*)       die "unknown option: $1  (try --help)" ;;
-        *)        SHARES="${SHARES} $1"; shift ;;
+        *)        SHARES="${SHARES}$1${NL}"; shift ;;
     esac
 done
 
@@ -76,36 +84,56 @@ share_path() {
     synoshare --get-real-path "$1" 2>/dev/null | tr -d '\r' | tail -n 1
 }
 
+# `synoshare --enum ALL` prints two header lines and then one bare share name
+# per line, not indented:
+#
+#   Share Enum Arguments: [0x3FF0F]  ALL ENC DEC ...
+#   37 Listed:
+#   Apps
+#   Extern-Eigene Dateien
+#
+# The first version of this expected the names to be indented and so found
+# none at all - the list came out empty with no error, which is the worst way
+# for a parser to be wrong.
 all_shares() {
-    # The listing carries a count line and indentation around the names.
     synoshare --enum ALL 2>/dev/null \
         | tr -d '\r' \
-        | sed -n 's/^[[:space:]]\{1,\}\([^[:space:]].*\)$/\1/p' \
-        | grep -v '^Share number' || true
+        | sed -e '/^Share Enum Arguments:/d' \
+              -e '/^[0-9][0-9]* Listed:/d' \
+              -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+        | grep -v '^$' || true
 }
 
+# Reads share names from stdin, one per line.
 report() {
-    printf "  %-28s %-42s %s\n" "SHARE" "PATH" "${USER_NAME} can"
-    for share in $1; do
+    printf "  %-30s %-40s %s\n" "SHARE" "PATH" "${USER_NAME} can"
+    while IFS= read -r share; do
+        [ -n "${share}" ] || continue
         path=$(share_path "${share}")
         [ -n "${path}" ] || path="(unknown)"
-        printf "  %-28s %-42s %s\n" "${share}" "${path}" "$(reachable "${path}")"
+        printf "  %-30s %-40s %s\n" "${share}" "${path}" "$(reachable "${path}")"
     done
 }
 
 # --- --list -----------------------------------------------------------------
 if [ "${LIST_ONLY}" = "1" ]; then
+    found=$(all_shares)
+    if [ -z "${found}" ]; then
+        die "synoshare listed no shares. Check the output of:  synoshare --enum ALL"
+    fi
     echo "Shares on this NAS, and what ${USER_NAME} can do with them:"
     echo
-    report "$(all_shares)"
+    printf '%s\n' "${found}" | report
     echo
     echo "Grant one with:  sudo sh $0 --apply <share>"
+    echo "Names with spaces need quotes:  sudo sh $0 --apply \"Nino Arbeit\""
     exit 0
 fi
 
 if [ -n "${CHECK_PATHS}" ] && [ -z "${SHARES}" ]; then
     echo "Checking paths as ${USER_NAME}:"
-    for path in ${CHECK_PATHS}; do
+    printf '%s' "${CHECK_PATHS}" | while IFS= read -r path; do
+        [ -n "${path}" ] || continue
         printf "  %-52s %s\n" "${path}" "$(reachable "${path}")"
     done
     exit 0
@@ -114,13 +142,14 @@ fi
 [ -n "${SHARES}" ] || usage 1
 
 # --- refuse to work on shares that do not exist -----------------------------
-for share in ${SHARES}; do
+printf '%s' "${SHARES}" | while IFS= read -r share; do
+    [ -n "${share}" ] || continue
     synoshare --get "${share}" >/dev/null 2>&1 || die \
         "no shared folder called '${share}'. See:  sudo sh $0 --list"
 done
 
 echo "Before:"
-report "${SHARES}"
+printf '%s' "${SHARES}" | report
 echo
 
 # Revoking means taking the user off both access lists, which drops it back to
@@ -128,20 +157,18 @@ echo
 # synoshare keeps one list per access level, so removing a name from the
 # no-access list is not the opposite of granting it - it is a different edit
 # that can leave the access it was meant to take away.
-plan_for() {
-    if [ "${REVOKE}" = "1" ]; then
-        echo "RW - ${1}
-RO - ${1}"
-    else
-        echo "${AUTH} ${OPERATOR} ${1}"
-    fi
-}
+if [ "${REVOKE}" = "1" ]; then
+    PLAN="RW -${NL}RO -"
+else
+    PLAN="${AUTH} ${OPERATOR}"
+fi
 
 if [ "${APPLY}" != "1" ]; then
     echo "Would run:"
-    for share in ${SHARES}; do
-        plan_for "${share}" | while read -r auth op name; do
-            echo "  synoshare --setuser ${name} ${auth} ${op} ${USER_NAME}"
+    printf '%s' "${SHARES}" | while IFS= read -r share; do
+        [ -n "${share}" ] || continue
+        printf '%s\n' "${PLAN}" | while read -r auth op; do
+            echo "  synoshare --setuser '${share}' ${auth} ${op} ${USER_NAME}"
         done
     done
     echo
@@ -150,21 +177,25 @@ if [ "${APPLY}" != "1" ]; then
 fi
 
 echo "Applying:"
-for share in ${SHARES}; do
-    plan_for "${share}" | while read -r auth op name; do
-        echo "  synoshare --setuser ${name} ${auth} ${op} ${USER_NAME}"
-        synoshare --setuser "${name}" "${auth}" "${op}" "${USER_NAME}" \
-            || die "synoshare refused to change '${name}'"
+printf '%s' "${SHARES}" | while IFS= read -r share; do
+    [ -n "${share}" ] || continue
+    printf '%s\n' "${PLAN}" | while read -r auth op; do
+        echo "  synoshare --setuser '${share}' ${auth} ${op} ${USER_NAME}"
+        synoshare --setuser "${share}" "${auth}" "${op}" "${USER_NAME}" \
+            || die "synoshare refused to change '${share}'"
     done
 done
 echo
 
 echo "After:"
-report "${SHARES}"
+printf '%s' "${SHARES}" | report
 
-for path in ${CHECK_PATHS}; do
-    printf "  %-52s %s\n" "${path}" "$(reachable "${path}")"
-done
+if [ -n "${CHECK_PATHS}" ]; then
+    printf '%s' "${CHECK_PATHS}" | while IFS= read -r path; do
+        [ -n "${path}" ] || continue
+        printf "  %-52s %s\n" "${path}" "$(reachable "${path}")"
+    done
+fi
 
 echo
 cat <<'NOTE'
