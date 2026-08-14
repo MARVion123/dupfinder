@@ -197,6 +197,40 @@ runs as `root` and sees everything, at the cost of the Package Center tile.
 Which one you want depends on whether you would rather click through a
 permissions dialog once per share, or give the tool the run of the NAS.
 
+#### Publishing a build
+
+The `.spk` is a build output, not source — `install/spk/dist/` is ignored by git
+on purpose, because committing a binary would grow the history by another copy
+on every rebuild. Releases are where it goes instead:
+
+```sh
+python3 install/spk/build_spk.py
+cd install/spk/dist
+cp dupfinder-1.0.0-0010.spk dupfinder.spk      # the stable name
+sha256sum dupfinder-1.0.0-0010.spk
+```
+
+Then on GitHub: **Releases → Draft a new release**, tag `v1.0.0-0010` against
+`main`, and attach **both** files.
+
+The second, unversioned copy is the point. GitHub serves the newest release's
+asset from a fixed address, but only if the filename stays the same between
+releases:
+
+```
+https://github.com/MARVion123/dupfinder/releases/latest/download/dupfinder.spk
+```
+
+With `gh` installed the whole thing is one command:
+
+```sh
+gh release create v1.0.0-0010 \
+    install/spk/dist/dupfinder-1.0.0-0010.spk \
+    install/spk/dist/dupfinder.spk \
+    --title "1.0.0 build 0010" \
+    --notes-file install/spk/dist/RELEASE_NOTES.md
+```
+
 #### A word on the payload
 
 Builds 0004 through 0009 shipped a corrupt `package.tgz` and could not be
