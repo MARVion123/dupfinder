@@ -1,0 +1,59 @@
+name: Checks
+
+# Runs on every push, which is the point: the product site lives in this
+# repository and rots silently while the code moves.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Two commits, so the drift step below can see what changed.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: The package still builds and holds together
+        run: python3 tests/test_spk.py
+
+      - name: The docs still describe this repository
+        run: python3 tools/check_docs.py
+
+      - name: Did the code move without the site?
+        # A warning, never a failure. Most commits do not touch anything the
+        # site claims, and a check that fails on those would be turned off
+        # within a week. This one only asks the question.
+        if: github.event_name == 'push'
+        run: |
+          set -eu
+          before="${{ github.event.before }}"
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+            echo "No previous commit to compare against; skipping."
+            exit 0
+          fi
+          changed=$(git diff --name-only "$before" "${{ github.sha }}")
+          echo "Changed in this push:"
+          echo "$changed" | sed 's/^/  /'
+
+          watched=$(echo "$changed" | grep -E '^(install/|dupfinder/|LICENSE|README\.md)' || true)
+          docs=$(echo "$changed" | grep -E '^docs/' || true)
+
+          if [ -n "$watched" ] && [ -z "$docs" ]; then
+            echo "::warning title=The site may be out of date::This push changed \
+          $(echo "$watched" | wc -l) file(s) under install/, dupfinder/, the licence or \
+          the README, and nothing under docs/. The mechanical checks passed, but they \
+          cannot tell whether the pages still describe what the tool now does. \
+          Worth a look: docs/index.html and docs/de/index.html."
+          else
+            echo "Nothing to flag."
+          fi

@@ -460,7 +460,20 @@ The DSM package has its own test, which needs nothing but Python:
 
 ```sh
 python3 tests/test_spk.py    # builds the .spk and takes it apart again
+python3 tools/check_docs.py  # do the docs still describe this repository?
 ```
+
+Both run on every push. `check_docs.py` exists because the product page lives
+in this repository and rots quietly while the code moves — it has happened
+twice already, once describing a package that could not be installed and once
+naming a build number in every install command. It catches the mechanical
+drift: a frozen build number, a path the docs tell you to run that no longer
+exists, a section present in one language but not the other, a missing image.
+
+It cannot tell whether the prose is still true. For that, CI raises a warning
+when a push touches `install/`, `dupfinder/`, the licence or the README without
+touching `docs/` — a question, not a failure, since most commits do not change
+anything the site claims.
 
 ## Performance notes
 
