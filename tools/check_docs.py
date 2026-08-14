@@ -149,7 +149,30 @@ if homepage:
               % (url, canonical.group(1) if canonical else "(no canonical)"))
 
 
-# --- 6. nothing half-written ------------------------------------------------
+# --- 6. the licence notice is one the licence can actually carry ------------
+# PolyForm's Notices clause only obliges a redistributor to pass on plain-text
+# lines *beginning with* `Required Notice:`. Ours had the copyright on one line
+# and the URL on the next, so the URL was not part of the notice at all - it
+# was a stray line above a licence. That is invisible unless you read the
+# clause and count lines.
+
+print("\nlicence notice")
+licence = read("LICENSE").splitlines()
+notice = [line for line in licence if line.startswith("Required Notice:")
+          and "Yoyodyne" not in line]
+check("exactly one Required Notice line", len(notice) == 1,
+      "found %d" % len(notice))
+if len(notice) == 1:
+    line = notice[0]
+    check("the notice names a copyright holder", "Copyright" in line, line)
+    check("the notice carries the URL on the same line",
+          "http" in line and line.rstrip().endswith(")"),
+          "%r - PolyForm's own example puts it in brackets on the one line" % line)
+check("the licence body is still PolyForm Noncommercial 1.0.0",
+      "# PolyForm Noncommercial License 1.0.0" in read("LICENSE"))
+
+
+# --- 7. nothing half-written ------------------------------------------------
 
 print("\nleftovers")
 for rel in PROSE:
