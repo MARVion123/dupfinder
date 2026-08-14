@@ -1,0 +1,88 @@
+name: Package
+
+# A release is a frozen snapshot: pushing commits does not change what people
+# download. So the package is built here, from the tag, and attached
+# automatically - and the tests gate it, because the one failure this project
+# actually had shipped a .spk that looked perfectly normal and could not be
+# unpacked.
+#
+#   git tag -a v1.0.0-0011 -m "..." && git push origin v1.0.0-0011
+#
+# Everything else follows from that one command.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Also on demand, so the build can be exercised without cutting a release.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build and check the package
+        # test_spk.py runs build_spk.py itself and then takes the result apart,
+        # including feeding it four kinds of damaged archive to confirm the
+        # build refuses them.
+        run: python3 tests/test_spk.py
+
+      - name: Check the tag against the build it produced
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -eu
+          spk=$(ls install/spk/dist/*.spk)
+          version=$(tar xOf "$spk" INFO | sed -n 's/^version="\(.*\)"$/\1/p')
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag says   $tag"
+          echo "build says $version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the built version $version." \
+                 "Bump BUILD_NUMBER in install/spk/build_spk.py, or tag v$version."
+            exit 1
+          fi
+
+      - name: Name the assets
+        id: assets
+        run: |
+          set -eu
+          cd install/spk/dist
+          spk=$(ls *.spk)
+          # The unversioned copy is what makes
+          # releases/latest/download/dupfinder.spk work: GitHub only serves
+          # that fixed address when the filename stays the same between
+          # releases.
+          cp "$spk" dupfinder.spk
+          sha256sum "$spk" dupfinder.spk | tee SHA256SUMS
+          echo "spk=install/spk/dist/$spk" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the build even when there is no tag
+        uses: actions/upload-artifact@v4
+        with:
+          name: dupfinder-spk
+          path: install/spk/dist/*.spk
+
+      - name: Attach it to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="$GITHUB_REF_NAME"
+          files="${{ steps.assets.outputs.spk }} install/spk/dist/dupfinder.spk install/spk/dist/SHA256SUMS"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # Release already drafted by hand - replace the files, keep the notes.
+            gh release upload "$tag" $files --clobber
+          else
+            gh release create "$tag" $files \
+              --title "${tag#v}" --generate-notes
+          fi

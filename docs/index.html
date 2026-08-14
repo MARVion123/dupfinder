@@ -1,0 +1,1223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Duplicate File Finder for Synology NAS</title>
+<meta name="description" content="A self-hosted duplicate and near-duplicate file finder for Synology NAS. Every match is proven byte for byte before it is offered, and every deletion can be undone.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%2325477a'/%3E%3Crect x='40' y='30' width='38' height='52' rx='4' fill='%2396b2dc'/%3E%3Crect x='22' y='18' width='38' height='52' rx='4' fill='%23f7faff'/%3E%3Crect x='40' y='74' width='38' height='8' rx='4' fill='%23f0a03c'/%3E%3C/svg%3E">
+<link rel="canonical" href="https://marvion123.github.io/dupfinder/">
+<meta property="og:title" content="Duplicate File Finder for Synology NAS">
+<meta property="og:description" content="A self-hosted duplicate and near-duplicate file finder for Synology NAS. Every match is proven byte for byte before it is offered, and every deletion can be undone.">
+<meta property="og:type" content="website">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+</style>
+</head>
+<body>
+<style>
+  /* ------------------------------------------------------------------ tokens
+     The palette is a storage instrument: cool near-neutrals biased towards the
+     accent, one signal colour borrowed from a drive activity LED, and a single
+     semantic red that appears only where something is destroyed. */
+  :root {
+    --ground:  #eff1ef;
+    --panel:   #ffffff;
+    --sunk:    #e5e9e7;
+    --rule:    #cbd3d1;
+    --rule-soft: #dfe5e3;
+    --ink:     #101619;
+    --ink-2:   #33403f;
+    --muted:   #5f6f6f;
+    --signal:  #0b6e70;
+    --signal-2:#0a5658;
+    --signal-wash: #dceceb;
+    --alert:   #a33a2c;
+    --shadow: 0 1px 2px rgba(16,22,25,.05), 0 8px 24px -12px rgba(16,22,25,.18);
+
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono",
+            "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+    --measure: 66ch;
+    --wide: 1120px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:  #0c1113;
+      --panel:   #121a1c;
+      --sunk:    #0f1618;
+      --rule:    #24312f;
+      --rule-soft: #1b2426;
+      --ink:     #e4ebe9;
+      --ink-2:   #b9c6c4;
+      --muted:   #839796;
+      --signal:  #3fcbc4;
+      --signal-2:#7fe0da;
+      --signal-wash: #12302f;
+      --alert:   #e0705e;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+    }
+  }
+  /* The viewer's toggle stamps data-theme on the root and must win over the
+     media query in both directions, so both are restated here. */
+  :root[data-theme="light"] {
+    --ground:#eff1ef; --panel:#ffffff; --sunk:#e5e9e7; --rule:#cbd3d1;
+    --rule-soft:#dfe5e3; --ink:#101619; --ink-2:#33403f; --muted:#5f6f6f;
+    --signal:#0b6e70; --signal-2:#0a5658; --signal-wash:#dceceb; --alert:#a33a2c;
+    --shadow: 0 1px 2px rgba(16,22,25,.05), 0 8px 24px -12px rgba(16,22,25,.18);
+  }
+  :root[data-theme="dark"] {
+    --ground:#0c1113; --panel:#121a1c; --sunk:#0f1618; --rule:#24312f;
+    --rule-soft:#1b2426; --ink:#e4ebe9; --ink-2:#b9c6c4; --muted:#839796;
+    --signal:#3fcbc4; --signal-2:#7fe0da; --signal-wash:#12302f; --alert:#e0705e;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  }
+
+  /* ------------------------------------------------------------------ base */
+  html { color-scheme: light dark; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--signal); color: var(--panel); }
+  a { color: var(--signal); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 2px;
+  }
+  img { max-width: 100%; display: block; }
+
+  .wrap { width: min(var(--wide), calc(100% - 48px)); margin-inline: auto; }
+  @media (max-width: 640px) { .wrap { width: calc(100% - 32px); } }
+
+  .prose { max-width: var(--measure); }
+  .prose p { margin: 0 0 1em; color: var(--ink-2); }
+  .prose p:last-child { margin-bottom: 0; }
+  .lede { font-size: 1.2rem; line-height: 1.55; color: var(--ink-2); }
+
+  /* --------------------------------------------------------------- masthead */
+  .masthead {
+    border-bottom: 1px solid var(--rule);
+    background: var(--panel);
+  }
+  .masthead .wrap {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; padding: 14px 0; flex-wrap: wrap;
+  }
+  .partno {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .partno b { color: var(--ink); font-weight: 600; letter-spacing: .1em; }
+
+  /* ------------------------------------------------------------------ hero */
+  .hero { padding: clamp(48px, 9vw, 104px) 0 clamp(40px, 6vw, 72px); }
+  .hero h1 {
+    font-family: var(--mono);
+    font-size: clamp(2rem, 5.4vw, 3.9rem);
+    line-height: 1.02;
+    letter-spacing: -.035em;
+    font-weight: 600;
+    margin: 0 0 24px;
+    text-wrap: balance;
+    max-width: 18ch;
+  }
+  .hero h1 .dim { color: var(--muted); }
+  .hero .lede { max-width: 56ch; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 28px 0 0; padding: 0; list-style: none; }
+  .chips li {
+    font-family: var(--mono); font-size: .74rem; letter-spacing: .06em;
+    padding: 5px 11px; border: 1px solid var(--rule); border-radius: 2px;
+    color: var(--ink-2); background: var(--panel);
+  }
+  .chips li.on { border-color: var(--signal); color: var(--signal); background: var(--signal-wash); }
+
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+  .btn {
+    font-family: var(--mono); font-size: .85rem; letter-spacing: .02em;
+    padding: 12px 20px; border-radius: 2px; text-decoration: none;
+    border: 1px solid var(--signal); display: inline-block;
+  }
+  .btn.solid { background: var(--signal); color: var(--ground); font-weight: 600; }
+  .btn.solid:hover { background: var(--signal-2); }
+  .btn.ghost { color: var(--signal); background: transparent; }
+  .btn.ghost:hover { background: var(--signal-wash); }
+
+  /* -------------------------------------------------------------- sections */
+  section { padding: clamp(44px, 7vw, 84px) 0; border-top: 1px solid var(--rule-soft); }
+  .sechead { display: grid; grid-template-columns: 4.5rem 1fr; gap: 0 16px; margin-bottom: 28px; }
+  @media (max-width: 640px) { .sechead { grid-template-columns: 1fr; gap: 6px; } }
+  .sechead .num {
+    font-family: var(--mono); font-size: .74rem; letter-spacing: .12em;
+    color: var(--signal); padding-top: .55em;
+  }
+  .sechead h2 {
+    font-family: var(--mono); font-weight: 600; letter-spacing: -.02em;
+    font-size: clamp(1.35rem, 2.6vw, 1.85rem); line-height: 1.2; margin: 0;
+    text-wrap: balance;
+  }
+  .sechead .sub { grid-column: 2; margin: 10px 0 0; max-width: var(--measure); color: var(--muted); }
+  @media (max-width: 640px) { .sechead .sub { grid-column: 1; } }
+
+  .body-indent { display: grid; grid-template-columns: 4.5rem 1fr; gap: 0 16px; }
+  @media (max-width: 900px) { .body-indent { grid-template-columns: 1fr; } }
+  .body-indent > .col { grid-column: 2; min-width: 0; }
+  @media (max-width: 900px) { .body-indent > .col { grid-column: 1; } }
+
+  /* -------------------------------------------------------------- pipeline */
+  .pipe { border: 1px solid var(--rule); background: var(--panel); border-radius: 3px; overflow: hidden; }
+  .pipe-head, .pipe-row {
+    display: grid;
+    grid-template-columns: 2.6rem minmax(9rem, 1.15fr) minmax(0, 1.6fr) 7.5rem;
+    align-items: center; gap: 14px; padding: 12px 18px;
+  }
+  .pipe-head {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--rule); background: var(--sunk);
+  }
+  .pipe-row { border-bottom: 1px solid var(--rule-soft); position: relative; }
+  .pipe-row:last-child { border-bottom: 0; }
+  .pipe-row .step { font-family: var(--mono); font-size: .8rem; color: var(--signal); font-weight: 600; }
+  .pipe-row .what { font-weight: 600; font-size: .95rem; }
+  .pipe-row .what small { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; line-height: 1.4; }
+  .pipe-row .cost {
+    font-family: var(--mono); font-size: .78rem; text-align: right;
+    color: var(--ink-2); font-variant-numeric: tabular-nums;
+  }
+  /* Bar width encodes how much of each file that pass reads. It is a scale of
+     magnitude, not a linear one - a full read dwarfs 128 KiB. */
+  .bar { height: 7px; background: var(--sunk); border-radius: 1px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--signal); opacity: .85;
+           transform-origin: left; }
+  .pipe-row.proof { background: var(--signal-wash); }
+  .pipe-row.proof .what { color: var(--signal-2); }
+
+  @media (max-width: 780px) {
+    .pipe-head { display: none; }
+    .pipe-row { grid-template-columns: 2.4rem 1fr; row-gap: 8px; }
+    .pipe-row .bar { grid-column: 2; }
+    .pipe-row .cost { grid-column: 2; text-align: left; }
+  }
+
+  /* The sweep runs once on load: a signal passing down the pipeline, which is
+     what the six passes literally are. */
+  .sweep {
+    position: absolute; inset: 0 0 auto 0; height: 2px; background: var(--signal);
+    opacity: 0; pointer-events: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .pipe-row .sweep { animation: flash 2.6s ease-out 1 both; }
+    .pipe-row:nth-child(2) .sweep { animation-delay: .15s; }
+    .pipe-row:nth-child(3) .sweep { animation-delay: .45s; }
+    .pipe-row:nth-child(4) .sweep { animation-delay: .75s; }
+    .pipe-row:nth-child(5) .sweep { animation-delay: 1.05s; }
+    .pipe-row:nth-child(6) .sweep { animation-delay: 1.35s; }
+    .pipe-row:nth-child(7) .sweep { animation-delay: 1.65s; }
+    @keyframes flash { 0% { opacity: 0 } 8% { opacity: .7 } 40%, 100% { opacity: 0 } }
+    .bar i { animation: grow .9s cubic-bezier(.2,.7,.3,1) both; }
+    @keyframes grow { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+  }
+
+  /* ----------------------------------------------------------------- cards */
+  .grid { display: grid; gap: 16px; }
+  .grid.two { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .card {
+    border: 1px solid var(--rule); background: var(--panel);
+    border-radius: 3px; padding: 20px 22px;
+  }
+  .card h3 {
+    font-family: var(--mono); font-size: .88rem; letter-spacing: -.01em;
+    margin: 0 0 8px; font-weight: 600;
+  }
+  .card p { margin: 0; color: var(--ink-2); font-size: .95rem; }
+  .card .flag {
+    font-family: var(--mono); font-size: .66rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--signal); display: block; margin-bottom: 10px;
+  }
+  .card.danger .flag { color: var(--alert); }
+
+  /* ---------------------------------------------------------------- tables */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 3px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  .cap {
+    margin: 12px 0 0; font-size: .82rem; color: var(--muted);
+    max-width: var(--measure);
+  }
+  th, td { padding: 11px 18px; text-align: left; border-bottom: 1px solid var(--rule-soft); }
+  thead th {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); background: var(--sunk);
+    border-bottom: 1px solid var(--rule); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.good { color: var(--signal); font-weight: 600; }
+  td.bad  { color: var(--alert); font-weight: 600; }
+  td .why { display: block; color: var(--muted); font-size: .82rem; }
+
+  /* -------------------------------------------------------------- big stat */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px;
+           background: var(--rule); border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; }
+  .stat { background: var(--panel); padding: 20px 22px; }
+  .stat .v {
+    font-family: var(--mono); font-size: clamp(1.5rem, 3.4vw, 2.1rem); font-weight: 600;
+    letter-spacing: -.03em; color: var(--signal); font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .stat .v span { font-size: .5em; letter-spacing: 0; color: var(--muted); margin-left: .3em; }
+  .stat .k { font-size: .85rem; color: var(--muted); margin-top: 6px; }
+
+  /* --------------------------------------------------------------- figures */
+  figure { margin: 0; }
+  .shot {
+    border: 1px solid var(--rule); border-radius: 3px; overflow: hidden;
+    background: var(--panel); box-shadow: var(--shadow);
+  }
+  figcaption {
+    font-size: .84rem; color: var(--muted); margin-top: 10px; max-width: var(--measure);
+  }
+  /* The screenshots follow the viewer's theme, because the app does too. */
+  .only-light { display: block; }
+  .only-dark  { display: none; }
+  @media (prefers-color-scheme: dark) {
+    .only-light { display: none; }
+    .only-dark  { display: block; }
+  }
+  :root[data-theme="light"] .only-light { display: block; }
+  :root[data-theme="light"] .only-dark  { display: none; }
+  :root[data-theme="dark"]  .only-light { display: none; }
+  :root[data-theme="dark"]  .only-dark  { display: block; }
+
+  /* ------------------------------------------------------------------ code */
+  pre {
+    margin: 0; padding: 16px 18px; overflow-x: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 3px;
+    font-family: var(--mono); font-size: .82rem; line-height: 1.7; color: var(--ink-2);
+  }
+  pre .c { color: var(--muted); }
+  pre b { color: var(--signal); font-weight: 600; }
+  code { font-family: var(--mono); font-size: .88em; background: var(--sunk);
+         padding: .1em .35em; border-radius: 2px; }
+
+  .steps { counter-reset: s; display: grid; gap: 20px; }
+  .step-block { display: grid; grid-template-columns: 2rem 1fr; gap: 14px; align-items: start; }
+  .step-block .i {
+    font-family: var(--mono); font-size: .72rem; color: var(--signal);
+    border: 1px solid var(--rule); border-radius: 2px; text-align: center;
+    padding: 2px 0; margin-top: 2px;
+  }
+  .step-block h3 { margin: 0 0 8px; font-family: var(--mono); font-size: .92rem; font-weight: 600; }
+  .step-block p { margin: 0 0 10px; color: var(--ink-2); font-size: .95rem; max-width: var(--measure); }
+
+
+  /* ------------------------------------------- badge chips become anchors */
+  .chips li { padding: 0; }
+  .chips li a, .chips li span.plain {
+    display: block; padding: 5px 11px; color: inherit; text-decoration: none;
+  }
+  .chips li:has(a):hover { border-color: var(--signal); background: var(--signal-wash); }
+  .partno a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--rule); }
+  .partno a:hover { color: var(--signal); border-bottom-color: var(--signal); }
+
+  /* -------------------------------------------------- the explained facts */
+  .facts { display: grid; gap: 1px; background: var(--rule);
+           border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; }
+  .fact { background: var(--panel); padding: 26px 28px; scroll-margin-top: 24px; }
+  .fact h3 {
+    font-family: var(--mono); font-weight: 600; font-size: 1.02rem;
+    letter-spacing: -.01em; margin: 0 0 12px; color: var(--ink);
+  }
+  .fact p { margin: 0 0 12px; color: var(--ink-2); max-width: var(--measure); font-size: .96rem; }
+  .fact p:last-child { margin-bottom: 0; }
+  .fact pre { margin: 4px 0 12px; }
+  /* A jumped-to entry marks itself, so a reader arriving from a chip can see
+     which of the six they landed on. */
+  .fact:target { background: var(--signal-wash); box-shadow: inset 3px 0 0 var(--signal); }
+
+  .terms { margin: 0 0 12px; max-width: var(--measure); }
+  .terms dt {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--signal); margin-top: 12px;
+  }
+  .terms dd { margin: 4px 0 0; color: var(--ink-2); font-size: .96rem; }
+  .bullets { margin: 0 0 12px; padding-left: 1.15em; max-width: var(--measure); }
+  .bullets li { color: var(--ink-2); font-size: .96rem; margin-bottom: 6px; }
+
+  /* --------------------------------------------------- field measurement */
+  .field { border: 1px solid var(--signal); border-radius: 3px; background: var(--signal-wash);
+           padding: 22px 24px; }
+  .field .flag {
+    font-family: var(--mono); font-size: .66rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--signal); display: block; margin-bottom: 14px;
+  }
+  .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 18px; }
+  .field-grid div .v {
+    font-family: var(--mono); font-size: 1.35rem; font-weight: 600; letter-spacing: -.02em;
+    color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15;
+  }
+  .field-grid div .k { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+
+  /* ---------------------------------------------------------------- footer */
+  footer { border-top: 1px solid var(--rule); padding: 40px 0 64px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  footer p { margin: 0; color: var(--muted); font-size: .86rem; max-width: 52ch; }
+  .colophon { font-family: var(--mono); font-size: .7rem; letter-spacing: .1em;
+              text-transform: uppercase; color: var(--muted); }
+
+  /* ------------------------------------------------- narrow screens, again
+     A grid track's automatic minimum is min-content, not zero, so a <pre>
+     holding a long command widens the whole column even though the <pre>
+     itself is set to scroll. At 390px that pushed the page 225px past the
+     viewport and the body scrolled sideways. Measured, not guessed:
+     everything below is the set of containers that sit between a code block
+     and the page edge. */
+  .step-block { grid-template-columns: 2rem minmax(0, 1fr); }
+  .step-block > *, .card, .fact, .grid > *, .steps > * { min-width: 0; }
+  pre { max-width: 100%; }
+</style>
+<header class="masthead">
+  <div class="wrap">
+    <div class="partno"><b>DUPFINDER</b> &nbsp;/&nbsp; Data sheet &nbsp;/&nbsp; v1.0.0</div>
+    <div class="partno"><a href="#badge-dsm">Synology DSM 7</a> &nbsp;·&nbsp; <a href="#badge-python">Python 3.8+</a> &nbsp;·&nbsp; <a href="#badge-mit">Noncommercial</a>&nbsp;·&nbsp; <a href="de/">Deutsch</a></div>
+  </div>
+</header>
+
+<div class="wrap hero">
+  <h1>Prove it first.<br><span class="dim">Then delete.</span></h1>
+  <p class="lede">
+    A self-hosted tool that finds duplicate and near-duplicate files on your own
+    NAS. Before it offers to delete anything, it compares the files byte for
+    byte. And every deletion can be undone.
+  </p>
+  <ul class="chips">
+    <li class="on"><a href="#badge-selfhosted">Runs on your hardware</a></li>
+    <li><a href="#badge-nocloud">No cloud, no account</a></li>
+    <li><a href="#badge-stdlib">Python standard library</a></li>
+    <li><a href="#badge-mit">Free, but not commercially</a></li>
+  </ul>
+  <div class="cta">
+    <a class="btn solid" href="https://github.com/MARVion123/dupfinder/releases/latest">Download the package →</a>
+    <a class="btn ghost" href="#install">How to install</a>
+    <a class="btn ghost" href="https://github.com/MARVion123/dupfinder">Source on GitHub</a>
+  </div>
+</div>
+
+<section id="pipeline">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 01</div>
+      <h2>Six passes, each one paying for the next</h2>
+      <p class="sub">
+        Comparing every file with every other file is unaffordable. So each pass
+        throws away what the next one no longer has to look at — and gets more
+        expensive per file precisely because less is left.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+        <div class="pipe">
+          <div class="pipe-head">
+            <div>No.</div><div>Pass</div><div>How much of each file it reads</div><div class="cost">Cost</div>
+          </div>
+
+          <div class="pipe-row">
+            <span class="sweep"></span>
+            <div class="step">01</div>
+            <div class="what">Index<small>Walk the tree, skip <code>@eaDir</code>, <code>#recycle</code> and snapshots, collapse hardlinks</small></div>
+            <div class="bar"><i style="width:2%"></i></div>
+            <div class="cost">one stat</div>
+          </div>
+
+          <div class="pipe-row">
+            <span class="sweep"></span>
+            <div class="step">02</div>
+            <div class="what">Size<small>Only sizes that occur more than once can possibly be duplicates</small></div>
+            <div class="bar"><i style="width:0%"></i></div>
+            <div class="cost">nothing</div>
+          </div>
+
+          <div class="pipe-row">
+            <span class="sweep"></span>
+            <div class="step">03</div>
+            <div class="what">Quick hash<small>MD5 over the first and last 64 KiB, plus the size</small></div>
+            <div class="bar"><i style="width:9%"></i></div>
+            <div class="cost">128 KiB</div>
+          </div>
+
+          <div class="pipe-row">
+            <span class="sweep"></span>
+            <div class="step">04</div>
+            <div class="what">Full MD5<small>Content hash of whatever survived this far</small></div>
+            <div class="bar"><i style="width:62%"></i></div>
+            <div class="cost">whole file</div>
+          </div>
+
+          <div class="pipe-row proof">
+            <span class="sweep"></span>
+            <div class="step">05</div>
+            <div class="what">Proof<small>Byte-for-byte comparison of every MD5 match. These groups carry the <b>✓ verified</b> mark</small></div>
+            <div class="bar"><i style="width:100%"></i></div>
+            <div class="cost">2 × whole file</div>
+          </div>
+
+          <div class="pipe-row">
+            <span class="sweep"></span>
+            <div class="step">06</div>
+            <div class="what">Similarity<small>CTPH fuzzy hash for content, perceptual hash for images — produces a rating rather than a yes or no</small></div>
+            <div class="bar"><i style="width:26%"></i></div>
+            <div class="cost">4 MiB</div>
+          </div>
+        </div>
+        <p style="font-size:.84rem;color:var(--muted);margin:12px 0 0;max-width:var(--measure)">
+          The bars show how much of a file each pass reads — as an order of
+          magnitude, not a linear scale. Pass 5 reads twice because it holds two
+          files side by side.
+        </p>
+
+        <div class="grid two" style="margin-top:28px">
+          <div class="card">
+            <span class="flag">Why pass 5 exists</span>
+            <h3>MD5 is not enough when the answer is "delete"</h3>
+            <p>An MD5 collision is astronomically unlikely — but deletion is
+            irreversible. So the match is proven rather than assumed. Only proven
+            groups carry the mark.</p>
+          </div>
+          <div class="card">
+            <span class="flag">Why pass 6 exists</span>
+            <h3>A rating, not a claim</h3>
+            <p>The fuzzy hash scores content similarity from 0 to 100. That number
+            is blended with the size ratio and filename similarity — content
+            dominates, the rest only tips a borderline pair.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 02</div>
+      <h2>Four things standing between you and a lost file</h2>
+      <p class="sub">
+        A tool that deletes on request is a tool nobody watches closely enough.
+        So here every step is either proven or reversible.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+        <div class="grid two">
+          <div class="card">
+            <span class="flag">01 — Proof</span>
+            <h3>Compared byte for byte</h3>
+            <p>Every match is read back in full before it is ever offered. What
+            "identical" means here has been demonstrated.</p>
+          </div>
+          <div class="card">
+            <span class="flag">02 — Reversible</span>
+            <h3>Quarantine, not deletion</h3>
+            <p>By default files move into
+            <code>.dupfinder-trash/scan-N/</code> and come back with one click
+            from the action log. The DSM recycle bin is an option too.</p>
+          </div>
+          <div class="card">
+            <span class="flag">03 — Floor</span>
+            <h3>The last copy survives</h3>
+            <p>Select every file in a group by accident and one is kept anyway,
+            reported as skipped. A group cannot be emptied.</p>
+          </div>
+          <div class="card">
+            <span class="flag">04 — Rehearsal</span>
+            <h3>Simulate it first</h3>
+            <p>One tick in the action bar runs the whole thing — allowlist check,
+            last-copy protection, destination arithmetic — and stops just short of
+            the filesystem call. Same code path, not a parallel one.</p>
+          </div>
+        </div>
+
+        <figure style="margin-top:32px">
+          <div class="shot">
+            <img src="assets/shot-4f4b409cd185.png" alt="The action bar in simulation mode: outlined in the accent colour, the button reads Simulate deletion." width="1500">
+          </div>
+          <figcaption>
+            With the box ticked the bar changes colour and "Delete selected"
+            becomes "Simulate deletion". Log entries appear marked
+            <em>simulated</em> — with no Restore button, because nothing moved.
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="ui">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 03</div>
+      <h2>What a result looks like</h2>
+      <p class="sub">
+        A table where every column sorts: similarity, copies, file size,
+        reclaimable bytes, folders spanned, suggestion confidence. Results appear
+        while the scan is still running.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+        <figure>
+          <div class="shot">
+            <img class="only-light" src="assets/shot-6033d06e8ee4.png" alt="Results list with six groups, similarity scores and suggestions." width="1500">
+            <img class="only-dark" src="assets/shot-606231d3baf8.png" alt="The same results list in dark mode." width="1500">
+          </div>
+          <figcaption>
+            A real scan over a sample library. Green with the mark: proven byte for
+            byte. Without the mark and below 100 %: a rated similarity — here a
+            revised text document (96 %) and a re-exported photo (98 %).
+          </figcaption>
+        </figure>
+
+        <figure style="margin-top:36px">
+          <div class="shot">
+            <img class="only-light" src="assets/shot-e7bd252d270c.png" alt="An expanded photo group with thumbnails, dimensions, capture date and camera." width="1500">
+            <img class="only-dark" src="assets/shot-fbf992c000de.png" alt="The same expanded photo group in dark mode." width="1500">
+          </div>
+          <figcaption>
+            Expanding a group shows a thumbnail per image next to its dimensions,
+            EXIF capture date and camera — the things you actually need to tell two
+            similar photos apart. The preview honours the EXIF orientation flag.
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="formats">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 04</div>
+      <h2>What it finds, and where it stops</h2>
+      <p class="sub">
+        Exact duplicates are found in any file type; that comparison is blind to
+        content. For <em>similar</em> files the answer depends on the format.
+        Measured on a revised document: one paragraph rewritten, one added.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr><th>Format</th><th class="n">Similarity detected</th><th>Method</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>CSV, log files</td><td class="n good">99 %</td><td>Fuzzy hash</td></tr>
+              <tr><td>PDF with an uncompressed text stream</td><td class="n good">99 %</td><td>Fuzzy hash</td></tr>
+              <tr><td>Plain text, Markdown, source code</td><td class="n good">97 %</td><td>Fuzzy hash</td></tr>
+              <tr><td>WAV, RAW — trimmed at the end</td><td class="n good">97 %</td><td>Fuzzy hash</td></tr>
+              <tr><td>Photo, re-encoded or resized</td><td class="n good">100 %</td><td>Perceptual hash</td></tr>
+              <tr><td>Film, different container (remux)</td><td class="n good">found</td><td>Fuzzy hash</td></tr>
+              <tr>
+                <td>Word, Excel, ODT
+                  <span class="why">ZIP containers: one small edit produces a completely different compressed stream</span></td>
+                <td class="n bad">0 %</td><td>— exact only</td></tr>
+              <tr>
+                <td>Film, re-encoded
+                  <span class="why">Two encodings share no bytes at all; that would need a video fingerprint</span></td>
+                <td class="n bad">0 %</td><td>— exact only</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="cap">
+          Measured with this tool's own methods. For the formats scoring 0 %,
+          exact detection is unaffected — and that is the part you delete on
+          anyway.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="speed">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 05</div>
+      <h2>Where the time goes</h2>
+      <p class="sub">
+        The fuzzy hash runs in pure Python, one byte at a time. That is the wall —
+        and the reason for the one setting that actually matters.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+        <div class="stats">
+          <div class="stat">
+            <div class="v">739<span>MiB/s</span></div>
+            <div class="k">MD5 — the exact search</div>
+          </div>
+          <div class="stat">
+            <div class="v">2.5<span>MiB/s</span></div>
+            <div class="k">Fuzzy hash — the similarity search</div>
+          </div>
+          <div class="stat">
+            <div class="v">≈300<span>×</span></div>
+            <div class="k">The gap between them</div>
+          </div>
+        </div>
+
+        <p style="margin:24px 0 16px;max-width:var(--measure);color:var(--ink-2)">
+          So the similarity pass reads the beginning of a file rather than all of
+          it. Ten films, each also present in a different container — at which
+          budget does detection break?
+        </p>
+
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr><th>Bytes read per file</th><th class="n">Duration</th><th class="n">Pairs found</th><th class="n">Photos caught</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>16 MiB</td><td class="n">77 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
+              <tr><td>4 MiB <em style="color:var(--signal);font-style:normal">— default</em></td><td class="n">30 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
+              <tr><td>2 MiB</td><td class="n">16 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
+              <tr><td>1 MiB</td><td class="n">8 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="cap">
+          A remux shares its payload from just past the header, so the beginning
+          is enough. The default leaves room for fatter headers; halve it and you
+          halve the time. Measured on a desktop CPU — a NAS is slower, the ratios
+          hold.
+        </p>
+
+
+        <div class="field" style="margin-top:24px">
+          <span class="flag">From a real run, not a test folder</span>
+          <div class="field-grid">
+            <div><div class="v">1,774,244</div><div class="k">files indexed</div></div>
+            <div><div class="v">12 TB</div><div class="k">data seen</div></div>
+            <div><div class="v">625 GB</div><div class="k">actually hashed</div></div>
+            <div><div class="v">155,138</div><div class="k">reused from cache</div></div>
+            <div><div class="v">47,234</div><div class="k">groups</div></div>
+            <div><div class="v">335 GB</div><div class="k">reclaimable</div></div>
+          </div>
+          <p style="margin:16px 0 0;font-size:.88rem;color:var(--ink-2);max-width:var(--measure)">
+            A media library on a DSM 7 NAS, captured 17 hours 26 minutes in — at
+            pass six of seven, so still running. Of 12 TB only 625 GB had to be
+            read; the cheap passes had already thrown the rest away. The 47,234
+            groups were usable at that point, because exact groups are published
+            the moment they are proven.
+          </p>
+        </div>
+        <div class="grid two" style="margin-top:24px">
+          <div class="card">
+            <span class="flag">Images</span>
+            <h3>Two methods, one of them wasted</h3>
+            <p>The same photo at two JPEG qualities: the fuzzy hash scores
+            <b>0 %</b>, the perceptual hash <b>100 %</b> — at a twenty-fourth of the
+            cost. So images now go through the perceptual hash only.</p>
+          </div>
+          <div class="card">
+            <span class="flag">Cache</span>
+            <h3>The second run is cheap</h3>
+            <p>Hashes are cached on path, size and modification time. A re-scan
+            only pays for what actually changed.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 06</div>
+      <h2>Install</h2>
+      <p class="sub">
+        Two ways onto a Synology, and choosing between them comes down to a
+        single rule in DSM. Everything else about them is the same.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>&nbsp;</th>
+                <th>Package Center</th>
+                <th>Service</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Tile with Start, Stop and Open</td>
+                <td class="good">yes</td>
+                <td>no</td>
+              </tr>
+              <tr>
+                <td>Icon in the DSM main menu, draggable to the desktop</td>
+                <td class="good">yes</td>
+                <td>no</td>
+              </tr>
+              <tr>
+                <td>Reads your shares</td>
+                <td>after you grant it, per share</td>
+                <td class="good">straight away</td>
+              </tr>
+              <tr>
+                <td>Runs as</td>
+                <td><code>dupfinder</code>, its own user</td>
+                <td><code>root</code></td>
+              </tr>
+              <tr>
+                <td>Starts with the NAS</td>
+                <td class="good">yes</td>
+                <td class="good">yes</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="cap">
+          DSM 7 only lets Synology-signed packages run as <code>root</code>. That
+          one rule produces every difference in this table: a package cannot see
+          your shares until you say so, and a plain service has nowhere to put a
+          tile. Nothing else separates them — same code, same database, same port.
+        </p>
+
+        <div class="steps" style="margin-top:32px">
+
+          <div class="step-block">
+            <div class="i">A</div>
+            <div>
+              <h3>As a package — tile and menu icon</h3>
+              <p>Build it on any machine that has Python 3, including the NAS
+              itself. There is nothing to compile.</p>
+              <pre>git clone <b>https://github.com/MARVion123/dupfinder.git</b>
+cd dupfinder
+python3 install/spk/build_spk.py
+<span class="c"># -> install/spk/dist/dupfinder-1.0.0-0010.spk</span></pre>
+              <p>In DSM, set <strong>Package Center → Settings → Trust Level</strong>
+              to <em>Any publisher</em>, then upload the file under
+              <strong>Manual Install</strong>. Or do it over SSH, which prints what
+              DSM actually says instead of "failed to install":</p>
+              <pre>sudo sh install/spk/install-spk.sh \
+    install/spk/dist/dupfinder-1.0.0-0010.spk</pre>
+              <p>Then grant it access to what you want scanned:
+              <strong>Control Panel → Shared Folder → Edit → Permissions →
+              System internal user → <code>dupfinder</code></strong>. A scan
+              silently skips what it cannot read, and deleting fails on what it
+              cannot write.</p>
+            </div>
+          </div>
+
+          <div class="step-block">
+            <div class="i">B</div>
+            <div>
+              <h3>As a service — sees everything, no tile</h3>
+              <p>Over SSH as <code>root</code>. Starts with the NAS and reaches
+              every share without granting anything.</p>
+              <pre><span class="c"># fetch and roll out</span>
+mkdir -p /volume1/dupfinder/src
+git clone <b>https://github.com/MARVion123/dupfinder.git</b> \
+    /volume1/dupfinder/src/dupfinder
+chmod +x /volume1/dupfinder/src/dupfinder/install/deploy.sh
+/volume1/dupfinder/src/dupfinder/install/deploy.sh --force
+
+<span class="c"># then, in a browser</span>
+http://&lt;nas-ip&gt;:8777</pre>
+            </div>
+          </div>
+
+          <div class="step-block">
+            <div class="i">C</div>
+            <div>
+              <h3>Keeping it current</h3>
+              <p>The same script pulls changes. It leaves the service alone when
+              nothing moved, runs <code>compileall</code> over the new checkout
+              <em>before</em> stopping anything, and puts the previous copy back if
+              the new one does not answer within 15 seconds.</p>
+              <pre>deploy.sh            <span class="c"># deploy if the remote moved</span>
+deploy.sh --check    <span class="c"># show what would happen, change nothing</span>
+
+<span class="c"># or nightly, on a timer</span>
+systemctl enable dupfinder-deploy.timer
+systemctl start  dupfinder-deploy.timer</pre>
+            </div>
+          </div>
+
+          <div class="step-block">
+            <div class="i">D</div>
+            <div>
+              <h3>Container</h3>
+              <p>Mount every volume you want to scan <strong>at the same path
+              inside the container</strong> — otherwise the paths in the UI will
+              not match the paths on the NAS.</p>
+              <pre>docker compose -f install/docker-compose.yml up -d</pre>
+            </div>
+          </div>
+
+          <div class="step-block">
+            <div class="i">E</div>
+            <div>
+              <h3>Try it without installing anything</h3>
+              <p>On any machine with Python 3.8 or newer.</p>
+              <pre>python3 -m dupfinder serve --port 8777
+python3 -m dupfinder scan /path/to/folder   <span class="c"># headless</span>
+python3 -m dupfinder report --top 25</pre>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="grid two" style="margin-top:28px">
+          <div class="card">
+            <span class="flag">Requirements</span>
+            <h3>Python 3.8+, and nothing else</h3>
+            <p><code>Pillow</code> is optional and unlocks image previews, EXIF
+            details and the perceptual hash. An Anthropic API key is optional and
+            unlocks AI suggestions — without one, a local rule engine fills the
+            same column.</p>
+          </div>
+          <div class="card">
+            <span class="flag">Safety</span>
+            <h3>The root allowlist is the boundary</h3>
+            <p>Only paths below the configured roots can be browsed, scanned or
+            deleted — every filesystem call goes through that check. Set an access
+            token if the port is reachable beyond your own network.</p>
+          </div>
+          <div class="card">
+            <span class="flag">If an install fails</span>
+            <h3>Clear the wreckage before retrying</h3>
+            <p>A half-failed DSM install leaves the system contradicting itself:
+            <code>synopkg list</code> shows the package while
+            <code>synopkg status</code> answers <code>non_installed</code>. Every
+            later attempt then fails too, because DSM believes it is already
+            there. <code>install-spk.sh --clean</code> removes the leftovers and
+            keeps your database.</p>
+          </div>
+          <div class="card">
+            <span class="flag">Keeping an existing database</span>
+            <h3>Point the package at it</h3>
+            <p>Moving from the service to the package does not have to cost you a
+            scan. Write the old path into a file and the package uses it:</p>
+            <pre style="margin-top:10px">echo /volume1/dupfinder/data \
+  &gt; /var/packages/dupfinder/var/datadir</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 07</div>
+      <h2>What it cannot do</h2>
+      <p class="sub">
+        So you do not have to find out for yourself.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+        <div class="grid two">
+          <div class="card danger">
+            <span class="flag">Limit</span>
+            <h3>No similarity for Office files</h3>
+            <p><code>.docx</code>, <code>.xlsx</code> and <code>.odt</code> are ZIP
+            containers. Two revisions of the same report look like strangers at the
+            byte level. Exact duplicates are still found.</p>
+          </div>
+          <div class="card danger">
+            <span class="flag">Limit</span>
+            <h3>No re-encoded video</h3>
+            <p>The same film in two encodings is not recognised as similar. The
+            same film in two containers is.</p>
+          </div>
+          <div class="card danger">
+            <span class="flag">Limit</span>
+            <h3>The DSM package is experimental</h3>
+            <p>An <code>.spk</code> can be built, but it failed reproducibly in
+            Package Center on a DSM 7.2 box. The systemd route above is the one
+            that holds up.</p>
+          </div>
+          <div class="card danger">
+            <span class="flag">Limit</span>
+            <h3>A tool for one person</h3>
+            <p>No user management, no roles, no multi-user operation. It is meant
+            as an admin tool on your own network, not as a service for many.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="get">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 08</div>
+      <h2>Get it</h2>
+      <p class="sub">
+        Everything is public: scanner, interface, install scripts, and the tests
+        that run before every change. Free for any noncommercial purpose — use it,
+        change it, pass it on. Commercial use and selling need written permission.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+
+        <div class="grid two">
+          <div class="card">
+            <span class="flag">Ready to install</span>
+            <h3>The built package</h3>
+            <p>A finished <code>.spk</code> is attached to each release, so you can
+            go straight to Manual Install without cloning anything. Scripts can
+            fetch the newest one from a fixed address:</p>
+            <pre style="margin-top:10px">curl -LO https://github.com/MARVion123/\
+dupfinder/releases/latest/download/dupfinder.spk</pre>
+          </div>
+          <div class="card">
+            <span class="flag">From source</span>
+            <h3>Clone and run</h3>
+            <p>No build step, no dependency tree. The three commands below get you
+            a running instance and both test suites.</p>
+            <pre style="margin-top:10px">git clone https://github.com/MARVion123/dupfinder.git
+cd dupfinder
+python3 -m dupfinder serve --port 8777</pre>
+          </div>
+        </div>
+
+        <div class="steps" style="margin-top:28px">
+          <div class="step-block">
+            <div class="i">✓</div>
+            <div>
+              <h3>The tests, if you want to check the claims on this page</h3>
+              <p>The package test builds a <code>.spk</code> and takes it apart
+              again, including feeding it four kinds of deliberately damaged
+              archive to confirm the build refuses them. The browser test drives
+              the real interface end to end and fails on any uncaught exception or
+              HTTP error the page triggers, not only on a failed assertion.</p>
+              <pre>python3 tests/test_spk.py            <span class="c"># 24 checks, needs only Python</span>
+
+cd tests/ui &amp;&amp; npm install
+npx playwright install chromium
+npm test                             <span class="c"># 34 checks in a real browser</span></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="cta" style="margin-top:28px">
+          <a class="btn solid" href="https://github.com/MARVion123/dupfinder/releases/latest">Download the package →</a>
+          <a class="btn ghost" href="https://github.com/MARVion123/dupfinder">github.com/MARVion123/dupfinder</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="badges">
+  <div class="wrap">
+    <div class="sechead">
+      <div class="num">§ 09</div>
+      <h2>The badges, written out</h2>
+      <p class="sub">
+        Four words at the top of this page are claims. Here is what each one
+        actually means, and how you can check it.
+      </p>
+    </div>
+    <div class="body-indent">
+      <div class="col">
+        <div class="facts">
+
+          <article class="fact" id="badge-selfhosted">
+            <h3>Runs on your hardware</h3>
+            <p>
+              The tool is a single Python process on your NAS. It opens a port
+              on your own network and waits for you to open a browser. Your
+              files are read, hashed and compared where they already sit — the
+              bytes never leave the machine.
+            </p>
+            <p>
+              That is checkable, not just asserted: the application code
+              contains <strong>no outbound address at all</strong>. There are
+              exactly two networking imports in the whole program, both in
+              <code>server.py</code>, and both for the <em>inbound</em>
+              direction — <code>http.server</code> and <code>urllib.parse</code>.
+              No telemetry, no crash reports, no ping to an update server.
+            </p>
+            <p>
+              The one connection that ever goes out is the AI suggestion pass.
+              It goes to Anthropic, and the library that makes it is imported
+              <em>inside</em> the function that requires a configured key — with
+              no key it is never even loaded. What travels is paths, sizes and
+              timestamps, <strong>never file contents</strong>.
+            </p>
+          </article>
+
+          <article class="fact" id="badge-nocloud">
+            <h3>No cloud, no account</h3>
+            <p>
+              No sign-up, no subscription, no licence key, no activation. There
+              is no vendor service that can go down, change its pricing or be
+              switched off one day — because there is no vendor service. What
+              you installed keeps working even if this repository disappears
+              tomorrow.
+            </p>
+            <p>
+              The flip side: there is no user management either. Whoever can
+              reach the port can do everything. On a home network behind a
+              router that is the usual shape for an admin tool; if the port
+              needs to be reachable beyond that, set an access token
+              (<code>auth_token</code>). Every request then has to carry it in
+              the <code>Authorization</code> header.
+            </p>
+          </article>
+
+          <article class="fact" id="badge-stdlib">
+            <h3>Python standard library</h3>
+            <p>
+              The scanner uses nothing that does not already ship with Python:
+              <code>hashlib</code> for hashing, <code>sqlite3</code> for
+              storage, <code>http.server</code> for the interface,
+              <code>os.scandir</code> for walking the tree. No web framework, no
+              ORM, no compiled extensions.
+            </p>
+            <p>
+              That sounds like a matter of taste; it is a practical one.
+              Building wheels on a NAS CPU is tedious, the compiler is often
+              missing, and <code>pip</code> is not a given on DSM. A tool with
+              no dependencies is installed by copying it.
+            </p>
+            <p>
+              There are two extras, both optional, both degrading quietly when
+              absent: <strong>Pillow</strong> for image previews, EXIF details
+              and the perceptual hash, and the <strong>anthropic</strong>
+              package for AI suggestions. Without Pillow, images fall back to
+              the slower content hash; without a key, a local rule engine fills
+              the same column.
+            </p>
+          </article>
+
+          <article class="fact" id="badge-mit">
+            <h3>Free, but not commercially</h3>
+            <p>
+              <strong>PolyForm Noncommercial 1.0.0</strong> — a standard licence
+              drafted for software, not a home-made "MIT minus selling".
+              Concretely:
+            </p>
+            <dl class="terms">
+              <dt>You may</dt>
+              <dd>use, copy, modify, build on it and pass it on — for any
+                <em>noncommercial</em> purpose, without asking and without
+                paying.</dd>
+              <dt>Noncommercial means</dt>
+              <dd>personal use, hobby projects, study, research and
+                experimentation — and explicitly also use inside charities,
+                schools and universities, public research bodies, public safety
+                and health organisations, environmental groups and government,
+                regardless of where their funding comes from.</dd>
+              <dt>You may not</dt>
+              <dd>sell it or use it commercially. That needs written permission
+                from the copyright holder — just ask.</dd>
+              <dt>You must</dt>
+              <dd>ship the licence text and the <code>Required&nbsp;Notice</code>
+                line with the code or any substantial portion of it.</dd>
+              <dt>You do not get</dt>
+              <dd>warranty, liability or support. The software is provided "as
+                is", explicitly. For a tool that deletes files that is not
+                boilerplate — it is why quarantine is the default.</dd>
+            </dl>
+            <p>
+              One thing that belongs with this: a restriction on the field of
+              use is incompatible with the Open Source Definition. The project
+              is therefore <em>source-available</em> rather than open source —
+              the code is there in full, the use of it simply is not free for
+              every purpose.
+            </p>
+          </article>
+
+          <article class="fact" id="badge-dsm">
+            <h3>Synology DSM 7</h3>
+            <p>
+              Built and run on DSM 7. What it actually requires, though, is only
+              a Linux with Python 3.8 or newer — the DSM parts are conveniences,
+              not dependencies:
+            </p>
+            <ul class="bullets">
+              <li>The exclusion list knows <code>@eaDir</code>,
+                <code>#recycle</code>, <code>#snapshot</code>,
+                <code>@sharesnap</code> and the rest of Synology's special
+                folders. Without them a scan reports thousands of meaningless
+                "duplicates" out of the thumbnail index.</li>
+              <li>The DSM recycle bin is offered as a deletion target, next to
+                quarantine and permanent removal.</li>
+              <li>The default roots are <code>/volume1</code> through
+                <code>/volume4</code>, <code>/volumeUSB1</code> and
+                <code>/var/services/homes</code>.</li>
+              <li>Hardlinks are collapsed, so the tool never promises you space
+                that does not exist.</li>
+            </ul>
+            <p>
+              On an ordinary Linux box, in a container or on macOS it runs just
+              the same; you simply set the roots yourself.
+            </p>
+          </article>
+
+          <article class="fact" id="badge-python">
+            <h3>Python 3.8 or newer</h3>
+            <p>
+              3.8 is what DSM 7 ships, which is where the floor comes from.
+              Newer versions are noticeably faster exactly where it hurts: the
+              similarity pass is a tight loop over individual bytes, and loops
+              like that gained a lot in Python 3.11.
+            </p>
+            <p>
+              If a newer Python is available as a package on your NAS, the
+              switch is worth making. A virtualenv on the data volume survives
+              DSM updates too:
+            </p>
+            <pre>/usr/local/bin/python3.11 -m venv /volume1/apps/venv
+/volume1/apps/venv/bin/pip install Pillow
+
+<span class="c"># then point the unit file at it</span>
+ExecStart=<b>/volume1/apps/venv/bin/python</b> -m dupfinder serve --port 8777</pre>
+            <p>
+              The deploy script reads the interpreter out of the unit file, so a
+              switch like this needs no follow-up anywhere else.
+            </p>
+          </article>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>
+      Provided as is, without warranty. The first scan belongs on a folder whose
+      loss would not hurt — and do try one delete and one restore before real
+      data is involved.
+    </p>
+    <div class="colophon">Dupfinder · Data sheet · v1.0.0 · PolyForm Noncommercial 1.0.0</div>
+  </div>
+</footer>
+</body>
+</html>
