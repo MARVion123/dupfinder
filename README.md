@@ -227,8 +227,7 @@ With `gh` installed the whole thing is one command:
 gh release create v1.0.0-0010 \
     install/spk/dist/dupfinder-1.0.0-0010.spk \
     install/spk/dist/dupfinder.spk \
-    --title "1.0.0 build 0010" \
-    --notes-file install/spk/dist/RELEASE_NOTES.md
+    --title "1.0.0 build 0010" --generate-notes
 ```
 
 #### A word on the payload
