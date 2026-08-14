@@ -152,9 +152,28 @@ port 8777.
 DSM 7 refuses to install third-party packages that ask to run as `root` unless
 Synology signed them, so the service runs as its own package user. That user has
 no access to your shares until you grant it: *Control Panel → Shared Folder →
-\<share\> → Edit → Permissions → System internal user → `dupfinder` →
-Read/Write*. Do this for every share you want to scan — the scan silently skips
-what it cannot read, and deletion fails on what it cannot write.
+\<share\> → Edit → Permissions*, switch the dropdown from *Local users* to
+**System internal user**, find `dupfinder` and tick **Read/Write**. Do this for
+every share you want to scan — the scan silently skips what it cannot read, and
+deletion fails on what it cannot write.
+
+Granting the share is not always enough. If you point a scan at a *subfolder*,
+the package user also needs to get there, and a folder it cannot traverse stops
+it before the target: in *File Station → right-click the folder → Properties →
+Permissions*, add `dupfinder` on each parent folder with at least **Traverse
+folders / List folders**, applied to *This folder*.
+
+Check the result rather than assuming it — this is one command and it answers
+the question directly:
+
+```sh
+sudo -u dupfinder ls "/volume1/<share>" >/dev/null && echo readable || echo denied
+sudo -u dupfinder test -w "/volume1/<share>" && echo writable || echo "read-only"
+```
+
+If `ls` says denied, the permission did not take. The usual cause is a parent
+folder without traverse rights, or an ACL on the share that overrides the simple
+Read/Write tick.
 
 That restriction is the whole reason the systemd install below still exists. It
 runs as `root` and sees everything, at the cost of the Package Center tile.
