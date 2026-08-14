@@ -140,6 +140,8 @@ def main() -> int:
             firewall = inner.extractfile("ui/dupfinder.sc").read().decode("utf-8")
         check("application is present", "dupfinder/__main__.py" in members)
         check("static files are present", "dupfinder/static/app.js" in members)
+        check("the licence travels with the software", "LICENSE" in members,
+              "a .spk is a distribution; PolyForm obliges it to carry the terms")
         check("shortcut config is present", "ui/config" in members)
         for size in build_spk.UI_ICON_SIZES:
             check("icon %d px" % size, "ui/images/dupfinder-%d.png" % size in members)

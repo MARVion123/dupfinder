@@ -61,7 +61,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 PKG_NAME = "dupfinder"
-BUILD_NUMBER = "0011"
+BUILD_NUMBER = "0012"
 
 # Where Package Center's Help and publisher links point.
 HOMEPAGE = "https://marvion123.github.io/dupfinder/"
@@ -164,6 +164,12 @@ def build_payload(tmp: str) -> tuple[str, str]:
     shutil.copytree(
         os.path.join(REPO, PKG_NAME), os.path.join(stage, PKG_NAME),
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+
+    # The licence has to travel with the software. PolyForm's Notices clause
+    # obliges anyone handing on any part of it to hand on the terms - or their
+    # URL - and the `Required Notice:` lines as well, and a .spk handed to a
+    # stranger is exactly that. Builds up to 0011 shipped without either.
+    shutil.copyfile(os.path.join(REPO, "LICENSE"), os.path.join(stage, "LICENSE"))
 
     ui = os.path.join(stage, "ui")
     os.makedirs(os.path.join(ui, "images"))
@@ -301,7 +307,8 @@ def verify(spk_path: str, checksum: str) -> None:
     DSM's only response was "failed to acquire postinst worker".
     """
     required = {"INFO", "PACKAGE_ICON.PNG", "PACKAGE_ICON_256.PNG", "package.tgz",
-                "conf/privilege", "conf/resource", "scripts/start-stop-status"}
+                "conf/privilege", "conf/resource", "scripts/start-stop-status",
+                "LICENSE"}
     with tarfile.open(spk_path, "r") as spk:
         names = spk.getnames()
         missing = required - set(names)
@@ -324,9 +331,13 @@ def verify(spk_path: str, checksum: str) -> None:
         with tarfile.open(fileobj=io.BytesIO(plain), mode="r:") as inner:
             members = inner.getnames()
         for wanted in ("dupfinder/__main__.py", "ui/config", "ui/%s.sc" % PKG_NAME,
-                       "ui/images/%s-256.png" % PKG_NAME):
+                       "ui/images/%s-256.png" % PKG_NAME, "LICENSE"):
             if wanted not in members:
                 raise AssertionError("missing from the payload: %s" % wanted)
+
+        shipped = spk.extractfile("LICENSE").read().decode("utf-8")
+        if "Required Notice:" not in shipped.splitlines()[0]:
+            raise AssertionError("the shipped LICENSE does not start with the Required Notice")
 
         # A stray carriage return in a shell script makes DSM's shell fail with
         # "\r: not found", which reads like the script is missing.
@@ -399,6 +410,11 @@ def main() -> int:
 
             for name in ("privilege", "resource"):
                 add_file("conf/" + name, os.path.join(HERE, "conf", name))
+
+            # DSM shows a LICENSE at the root of the .spk during installation,
+            # so the terms are in front of the person installing it rather than
+            # buried in the payload they may never look at.
+            add_file("LICENSE", os.path.join(REPO, "LICENSE"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
