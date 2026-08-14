@@ -148,6 +148,67 @@ def cmd_report(args, config):
     return 0
 
 
+def _human(n):
+    n = float(n or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024 or unit == "TB":
+            return "%.1f %s" % (n, unit) if unit != "B" else "%d B" % n
+        n /= 1024
+
+
+def cmd_usage(args, config):
+    """Show what the database is holding, and where it came from."""
+    db = Database(config.db_path)
+    info = db.usage()
+    print("database: %s" % config.db_path)
+    print("on disk : %s\n" % _human(info["bytes_on_disk"]))
+    print("  %-16s %12s" % ("table", "rows"))
+    for name, count in info["counts"].items():
+        print("  %-16s %12s" % (name, "{:,}".format(count)))
+    if info["scans"]:
+        print("\n  %-4s %-10s %10s %8s  %s" % ("scan", "state", "files", "groups", "root"))
+        for scan in info["scans"]:
+            print("  #%-3d %-10s %10s %8s  %s" % (
+                scan["id"], scan["state"], "{:,}".format(scan["files"]),
+                "{:,}".format(scan["groups"]), scan["root"]))
+        print("\nEvery scan keeps a full copy of the file index. "
+              "`dupfinder prune` drops the older ones.")
+    return 0
+
+
+def cmd_prune(args, config):
+    db = Database(config.db_path)
+    before = db.usage()
+    doomed = max(0, len(before["scans"]) - max(0, args.keep))
+    if not doomed and args.keep_cache:
+        print("Nothing to drop: %d scan(s), keeping %d." % (len(before["scans"]), args.keep))
+        return 0
+    if not args.yes:
+        print("This will drop %d of %d scans and their results, keeping the "
+              "%d most recent." % (doomed, len(before["scans"]), args.keep))
+        if not args.keep_cache:
+            print("Cache entries for files that no longer exist will go too.")
+        if args.vacuum:
+            print("The database will then be rewritten, which needs roughly "
+                  "%s free on the volume." % _human(before["bytes_on_disk"]))
+        if input("Continue? [y/N] ").strip().lower() not in ("y", "j", "yes", "ja"):
+            print("Cancelled.")
+            return 1
+
+    removed = db.prune(keep_scans=args.keep, drop_stale_cache=not args.keep_cache)
+    print("dropped %d scan(s), %s file rows, %s groups, %s stale cache entries"
+          % (removed["scans"], "{:,}".format(removed["files"]),
+             "{:,}".format(removed["groups"]), "{:,}".format(removed["cache"])))
+    if args.vacuum:
+        print("rewriting the database ...")
+        db.vacuum()
+    after = db.usage()
+    print("on disk : %s -> %s%s" % (
+        _human(before["bytes_on_disk"]), _human(after["bytes_on_disk"]),
+        "" if args.vacuum else "   (run again with --vacuum to actually shrink the file)"))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="dupfinder",
@@ -177,6 +238,21 @@ def main(argv=None):
                    help="force a full re-index even if quick_rescan is configured on")
     p.add_argument("--no-suggest", action="store_true")
     p.set_defaults(func=cmd_scan)
+
+    p = sub.add_parser("usage", help="show what the database is holding")
+    p.set_defaults(func=cmd_usage)
+
+    p = sub.add_parser("prune", help="drop old scans and stale cache entries")
+    p.add_argument("--keep", type=int, default=3,
+                   help="how many of the most recent scans to keep (default 3)")
+    p.add_argument("--keep-cache", action="store_true",
+                   help="do not drop cache entries whose file no longer exists")
+    p.add_argument("--vacuum", action="store_true",
+                   help="rewrite the database so the freed space is returned "
+                        "to the volume; needs the current size free and must "
+                        "not run during a scan")
+    p.add_argument("--yes", action="store_true", help="do not ask")
+    p.set_defaults(func=cmd_prune)
 
     p = sub.add_parser("report", help="print results of a scan")
     p.add_argument("--scan", type=int)

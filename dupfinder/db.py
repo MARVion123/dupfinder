@@ -6,6 +6,7 @@ its own worker). WAL mode lets the UI read results while a scan is writing.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 import time
@@ -216,6 +217,89 @@ class Database:
         self.execute("DELETE FROM hash_cache WHERE path=?", (path,))
         self.execute("DELETE FROM verify_cache WHERE a_path=? OR b_path=?",
                      (path, path))
+
+    # -- housekeeping --------------------------------------------------
+    def usage(self) -> dict:
+        """Row counts per table, plus the size of the database on disk.
+
+        A scan writes one row per file, so a tree of a million files leaves a
+        million rows behind - and the next scan of the same tree writes a
+        million more. Nothing prunes itself; this is what makes that visible.
+        """
+        tables = ["scans", "files", "groups", "group_members", "suggestions",
+                  "actions", "hash_cache", "verify_cache", "dir_cache"]
+        counts = {}
+        for table in tables:
+            row = self.one("SELECT COUNT(*) c FROM %s" % table)
+            counts[table] = row["c"] if row else 0
+        total = 0
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                total += os.path.getsize(self.path + suffix)
+            except OSError:
+                pass
+        per_scan = self.query(
+            """SELECT s.id, s.root, s.state, s.started_at,
+                      (SELECT COUNT(*) FROM files f WHERE f.scan_id=s.id) AS files,
+                      (SELECT COUNT(*) FROM groups g WHERE g.scan_id=s.id) AS groups
+               FROM scans s ORDER BY s.id DESC""")
+        return {"counts": counts, "bytes_on_disk": total,
+                "scans": [dict(r) for r in per_scan]}
+
+    def prune(self, keep_scans: int = 3, drop_stale_cache: bool = True) -> dict:
+        """Drop old scans and cache entries for files that are gone.
+
+        The caches are deliberately *not* cleared wholesale: they are what makes
+        a repeat scan cheap, and they stay valid across scans. Only entries
+        whose file no longer exists on disk are worth removing - those can never
+        match anything again.
+        """
+        removed = {"scans": 0, "files": 0, "groups": 0, "cache": 0}
+        keep = [r["id"] for r in self.query(
+            "SELECT id FROM scans ORDER BY id DESC LIMIT ?", (max(0, keep_scans),))]
+        doomed = [r["id"] for r in self.query("SELECT id FROM scans")
+                  if r["id"] not in keep]
+        for scan_id in doomed:
+            self.execute(
+                "DELETE FROM group_members WHERE group_id IN "
+                "(SELECT id FROM groups WHERE scan_id=?)", (scan_id,))
+            cur = self.execute("DELETE FROM groups WHERE scan_id=?", (scan_id,))
+            removed["groups"] += cur.rowcount or 0
+            self.execute("DELETE FROM suggestions WHERE scan_id=?", (scan_id,))
+            cur = self.execute("DELETE FROM files WHERE scan_id=?", (scan_id,))
+            removed["files"] += cur.rowcount or 0
+            self.execute("DELETE FROM dir_cache WHERE scan_id=?", (scan_id,))
+            self.execute("DELETE FROM scans WHERE id=?", (scan_id,))
+            removed["scans"] += 1
+
+        if drop_stale_cache:
+            gone = [r["path"] for r in self.query("SELECT path FROM hash_cache")
+                    if not os.path.exists(r["path"])]
+            for i in range(0, len(gone), 400):
+                chunk = gone[i:i + 400]
+                marks = ",".join("?" * len(chunk))
+                self.execute("DELETE FROM hash_cache WHERE path IN (%s)" % marks,
+                             tuple(chunk))
+                self.execute(
+                    "DELETE FROM verify_cache WHERE a_path IN (%s) OR b_path IN (%s)"
+                    % (marks, marks), tuple(chunk) * 2)
+            removed["cache"] = len(gone)
+        return removed
+
+    def vacuum(self) -> None:
+        """Hand the freed pages back to the filesystem.
+
+        Deleting rows only marks pages reusable inside the file; without this
+        the database never actually shrinks. It rewrites the whole file, so it
+        wants roughly the current size free on the volume, and it must not run
+        while a scan is writing.
+        """
+        conn = self.connect()
+        with self.write_lock:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.isolation_level = None
+            conn.execute("VACUUM")
+            conn.isolation_level = ""
 
     # -- directory cache (quick rescan) --------------------------------
     def dir_mtimes(self, scan_id: int) -> dict:

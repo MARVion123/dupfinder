@@ -361,6 +361,30 @@ tests/ui/       headless-browser smoke test (Playwright)
 
 ---
 
+## Housekeeping
+
+Nothing prunes itself. A scan writes **one row per file**, so re-scanning the
+same tree writes the whole index again — and on a real library the paths *are*
+the data. Measured on a tree with realistic path lengths, scanned four times:
+`files` is 64% of the database, `verify_cache` 15%, `hash_cache` 10%.
+
+```sh
+python3 -m dupfinder usage                    # what is in there, and which scan put it there
+python3 -m dupfinder prune --keep 3 --vacuum  # drop older scans, hand the space back
+```
+
+`prune` keeps the most recent scans and drops the rest with their groups and
+suggestions. It also drops cache entries whose file no longer exists — never the
+whole cache, which is what makes a repeat scan cheap and stays valid across
+scans.
+
+`--vacuum` is what actually shrinks the file: deleting rows only marks pages
+reusable inside it. It rewrites the database, so it wants roughly the current
+size free on the volume and must not run during a scan. Measured: four scans of
+the same tree, 17.6 MB → **10.2 MB** with `--keep 1 --vacuum`.
+
+---
+
 ## License
 
 **PolyForm Noncommercial 1.0.0** — see [LICENSE](LICENSE).
