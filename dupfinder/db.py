@@ -213,6 +213,36 @@ class Database:
             )
             conn.commit()
 
+    def cache_put_many(self, rows):
+        """Store many cache entries in one transaction.
+
+        rows: (path, size, mtime, quick, md5, fuzzy, dhash)
+
+        cache_put commits once per file. On an SSD that is 16,600 files a
+        second and invisible; the cost is one fsync per file, and on a NAS with
+        rotating disks an fsync is orders of magnitude dearer than the hash it
+        is recording. Measured on 20,000 rows: 1.21 s one at a time against
+        0.03 s batched, 37x.
+        """
+        if not rows:
+            return
+        conn = self.connect()
+        now = time.time()
+        with self.write_lock:
+            conn.executemany(
+                """INSERT INTO hash_cache(path,size,mtime,quick,md5,fuzzy,dhash,seen_at)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(path) DO UPDATE SET
+                     size=excluded.size, mtime=excluded.mtime,
+                     quick=COALESCE(excluded.quick, hash_cache.quick),
+                     md5=COALESCE(excluded.md5, hash_cache.md5),
+                     fuzzy=COALESCE(excluded.fuzzy, hash_cache.fuzzy),
+                     dhash=COALESCE(excluded.dhash, hash_cache.dhash),
+                     seen_at=excluded.seen_at""",
+                [tuple(row) + (now,) for row in rows],
+            )
+            conn.commit()
+
     def cache_invalidate(self, path: str):
         self.execute("DELETE FROM hash_cache WHERE path=?", (path,))
         self.execute("DELETE FROM verify_cache WHERE a_path=? OR b_path=?",

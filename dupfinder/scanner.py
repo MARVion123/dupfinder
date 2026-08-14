@@ -502,6 +502,7 @@ class ScanEngine:
         if not file_ids:
             return []
         updates = []
+        cached_rows = []
         for row in self._iter_files(file_ids, "id,path,size,mtime"):
             self._abort_if_cancelled()
             self._set(current=row["path"])
@@ -515,15 +516,19 @@ class ScanEngine:
                 except OSError:
                     value = None
                 else:
-                    self.db.cache_put(row["path"], row["size"], row["mtime"], quick=value)
+                    cached_rows.append(
+                        (row["path"], row["size"], row["mtime"], value, None, None, None))
             if value:
                 updates.append((value, row["id"]))
             self._bump("done")
             if len(updates) >= BATCH:
                 self.db.executemany("UPDATE files SET quick=? WHERE id=?", updates)
+                self.db.cache_put_many(cached_rows)
                 updates = []
+                cached_rows = []
         if updates:
             self.db.executemany("UPDATE files SET quick=? WHERE id=?", updates)
+        self.db.cache_put_many(cached_rows)
 
         rows = self.db.query(
             """SELECT id FROM files WHERE scan_id=? AND quick IS NOT NULL
@@ -541,6 +546,7 @@ class ScanEngine:
         if not file_ids:
             return {}
         updates = []
+        cached_rows = []
         for row in self._iter_files(file_ids, "id,path,size,mtime"):
             self._abort_if_cancelled()
             self._set(current=row["path"])
@@ -558,16 +564,20 @@ class ScanEngine:
                 except OSError:
                     value = None
                 else:
-                    self.db.cache_put(row["path"], row["size"], row["mtime"], md5=value)
+                    cached_rows.append(
+                        (row["path"], row["size"], row["mtime"], None, value, None, None))
             if value:
                 updates.append((value, row["id"]))
                 self._bump("files_hashed")
             self._bump("done")
             if len(updates) >= BATCH:
                 self.db.executemany("UPDATE files SET md5=? WHERE id=?", updates)
+                self.db.cache_put_many(cached_rows)
                 updates = []
+                cached_rows = []
         if updates:
             self.db.executemany("UPDATE files SET md5=? WHERE id=?", updates)
+        self.db.cache_put_many(cached_rows)
 
         rows = self.db.query(
             """SELECT md5, size, GROUP_CONCAT(id) AS ids FROM files
@@ -732,6 +742,7 @@ class ScanEngine:
 
         info = {}
         updates = []
+        cached_rows = []
         for row, is_image, wants_ctph in candidates:
             self._abort_if_cancelled()
             self._set(current=row["path"])
@@ -746,19 +757,21 @@ class ScanEngine:
                        > hashing.fuzzy_blocksize_for(row["size"], max_bytes)):
                 fz = None
 
+            fresh_fz = fresh_dh = None
             if wants_ctph and fz is None:
                 try:
-                    fz = hashing.fuzzy_hash(row["path"], row["size"],
-                                            self._cancel, max_bytes)
+                    fz = fresh_fz = hashing.fuzzy_hash(row["path"], row["size"],
+                                                       self._cancel, max_bytes)
                 except OSError:
                     fz = None
             elif not wants_ctph:
                 fz = None
             if is_image and dh is None:
-                dh = hashing.image_dhash(row["path"])
+                dh = fresh_dh = hashing.image_dhash(row["path"])
+            if fresh_fz or fresh_dh:
+                cached_rows.append((row["path"], row["size"], row["mtime"],
+                                    None, None, fresh_fz, fresh_dh))
             if fz or dh:
-                self.db.cache_put(row["path"], row["size"], row["mtime"],
-                                  fuzzy=fz, dhash=dh)
                 updates.append((fz, dh, row["id"]))
             info[row["id"]] = {
                 "path": row["path"], "name": row["name"], "ext": row["ext"],
@@ -768,9 +781,12 @@ class ScanEngine:
             if len(updates) >= BATCH:
                 self.db.executemany(
                     "UPDATE files SET fuzzy=?, dhash=? WHERE id=?", updates)
+                self.db.cache_put_many(cached_rows)
                 updates = []
+                cached_rows = []
         if updates:
             self.db.executemany("UPDATE files SET fuzzy=?, dhash=? WHERE id=?", updates)
+        self.db.cache_put_many(cached_rows)
 
         pairs = {}
         self._compare_fuzzy_buckets(info, threshold, pairs)
