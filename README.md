@@ -105,7 +105,7 @@ over LAN, VPN and QuickConnect.
 Build the package on any machine with Python 3:
 
 ```sh
-python3 install/spk/build_spk.py     # -> install/spk/dist/dupfinder-1.0.0-0010.spk
+python3 install/spk/build_spk.py     # -> install/spk/dist/dupfinder-<version>.spk
 python3 tests/test_spk.py            # optional, but see "A word on the payload"
 ```
 
@@ -132,7 +132,7 @@ nothing more. `install/spk/install-spk.sh` does the same job and prints what DSM
 actually says at each step:
 
 ```sh
-sudo sh install/spk/install-spk.sh dupfinder-1.0.0-0010.spk
+sudo sh install/spk/install-spk.sh install/spk/dist/dupfinder-*.spk
 sudo sh install/spk/install-spk.sh --status    # what DSM currently thinks
 sudo sh install/spk/install-spk.sh --clean     # remove leftovers, keep the database
 ```
@@ -206,12 +206,13 @@ on every rebuild. Releases are where it goes instead:
 ```sh
 python3 install/spk/build_spk.py
 cd install/spk/dist
-cp dupfinder-1.0.0-0010.spk dupfinder.spk      # the stable name
-sha256sum dupfinder-1.0.0-0010.spk
+cp dupfinder-*.spk dupfinder.spk               # the stable name
+sha256sum dupfinder-*.spk
 ```
 
-Then on GitHub: **Releases → Draft a new release**, tag `v1.0.0-0010` against
-`main`, and attach **both** files.
+Then on GitHub: **Releases → Draft a new release**, tag `v<version>` against
+`main` — the tag has to match the version in the built `INFO`, and the
+workflow below refuses the release if the two disagree. Attach **both** files.
 
 The second, unversioned copy is the point. GitHub serves the newest release's
 asset from a fixed address, but only if the filename stays the same between
@@ -224,10 +225,18 @@ https://github.com/MARVion123/dupfinder/releases/latest/download/dupfinder.spk
 With `gh` installed the whole thing is one command:
 
 ```sh
-gh release create v1.0.0-0010 \
-    install/spk/dist/dupfinder-1.0.0-0010.spk \
+gh release create v1.0.0-0011 \
+    install/spk/dist/dupfinder-*.spk \
     install/spk/dist/dupfinder.spk \
-    --title "1.0.0 build 0010" --generate-notes
+    --title "1.0.0 build 0011" --generate-notes
+```
+
+Simpler, and the one worth using: push the tag and let
+`.github/workflows/release.yml` build it. The tests gate that path, so a
+package that cannot be unpacked never reaches anyone.
+
+```sh
+git tag -a v1.0.0-0011 -m "..." && git push origin v1.0.0-0011
 ```
 
 #### A word on the payload

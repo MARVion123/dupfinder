@@ -810,13 +810,13 @@
               <pre>git clone <b>https://github.com/MARVion123/dupfinder.git</b>
 cd dupfinder
 python3 install/spk/build_spk.py
-<span class="c"># -> install/spk/dist/dupfinder-1.0.0-0010.spk</span></pre>
+<span class="c"># -> install/spk/dist/dupfinder-&lt;version&gt;.spk</span></pre>
               <p>In DSM, set <strong>Package Center → Settings → Trust Level</strong>
               to <em>Any publisher</em>, then upload the file under
               <strong>Manual Install</strong>. Or do it over SSH, which prints what
               DSM actually says instead of "failed to install":</p>
               <pre>sudo sh install/spk/install-spk.sh \
-    install/spk/dist/dupfinder-1.0.0-0010.spk</pre>
+    install/spk/dist/dupfinder-*.spk</pre>
               <p>Then grant it access to what you want scanned:
               <strong>Control Panel → Shared Folder → Edit → Permissions →
               System internal user → <code>dupfinder</code></strong>. A scan

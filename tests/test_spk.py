@@ -124,6 +124,14 @@ def main() -> int:
         check("dsmappname is set", bool(fields.get("dsmappname")))
         check("startable", fields.get("startable") == "yes")
 
+        # A URL in `description` is dead text; these are the fields Package
+        # Center actually turns into links.
+        for field in ("maintainer_url", "distributor_url", "helpurl", "support_url"):
+            value = fields.get(field, "")
+            check("%s is a link" % field,
+                  value.startswith("https://") and " " not in value, value or "(missing)")
+        check("German description present", bool(fields.get("description_ger")))
+
         print("\npayload")
         plain = gzip.decompress(payload)
         with tarfile.open(fileobj=io.BytesIO(plain)) as inner:

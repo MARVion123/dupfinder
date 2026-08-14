@@ -818,14 +818,14 @@
               <pre>git clone <b>https://github.com/MARVion123/dupfinder.git</b>
 cd dupfinder
 python3 install/spk/build_spk.py
-<span class="c"># -> install/spk/dist/dupfinder-1.0.0-0010.spk</span></pre>
+<span class="c"># -> install/spk/dist/dupfinder-&lt;version&gt;.spk</span></pre>
               <p>In DSM <strong>Paketzentrum → Einstellungen → Vertrauensebene</strong>
               auf <em>Beliebiger Herausgeber</em> stellen und die Datei unter
               <strong>Manuelle Installation</strong> hochladen. Oder per SSH — das
               zeigt, was DSM wirklich sagt, statt nur „Installation
               fehlgeschlagen":</p>
               <pre>sudo sh install/spk/install-spk.sh \
-    install/spk/dist/dupfinder-1.0.0-0010.spk</pre>
+    install/spk/dist/dupfinder-*.spk</pre>
               <p>Danach den Zugriff freigeben:
               <strong>Systemsteuerung → Gemeinsamer Ordner → Bearbeiten →
               Berechtigungen → Systeminterner Benutzer → <code>dupfinder</code></strong>.

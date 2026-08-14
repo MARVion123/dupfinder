@@ -61,7 +61,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 PKG_NAME = "dupfinder"
-BUILD_NUMBER = "0010"
+BUILD_NUMBER = "0011"
+
+# Where Package Center's Help and publisher links point.
+HOMEPAGE = "https://marvion123.github.io/dupfinder/"
 
 # Names the entry in ui/config. DSM uses it for the main-menu shortcut and for
 # Package Center's "Open" button, so INFO and ui/config have to agree on it.
@@ -97,7 +100,23 @@ def build_info(version: str, checksum: str) -> str:
          "Find duplicate and near-duplicate files anywhere under a directory "
          "you choose, see how similar they are, and remove the copies you tick. "
          "Deletions are quarantined and reversible by default."),
+        # Package Center picks the description matching the user's DSM
+        # language. `ger` is Synology's code for German, not `de`.
+        ("description_ger",
+         "Findet doppelte und ähnliche Dateien unterhalb eines Ordners deiner "
+         "Wahl, zeigt an, wie ähnlich sie sind, und entfernt die Kopien, die du "
+         "ankreuzt. Löschungen wandern standardmäßig in Quarantäne und lassen "
+         "sich zurückholen."),
         ("maintainer", "MARVion123"),
+        # These four are the only way a package gets a clickable link in
+        # Package Center - `description` is plain text and a URL in it stays
+        # dead. maintainer_url shows immediately; helpurl, support_url and
+        # distributor_url appear once the package is installed.
+        ("maintainer_url", "https://github.com/MARVion123"),
+        ("distributor", "MARVion123"),
+        ("distributor_url", HOMEPAGE),
+        ("helpurl", HOMEPAGE),
+        ("support_url", "https://github.com/MARVion123/dupfinder/issues"),
         ("thirdparty", "yes"),
         # Synology's docs call `startable` deprecated since 6.1-14907 (use
         # `ctl_stop`) and say both default to "yes". Empirically that is wrong
