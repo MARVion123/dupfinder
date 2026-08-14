@@ -1,5 +1,5 @@
 {
     "port-config": {
-        "protocol-file": "conf/dupfinder.sc"
+        "protocol-file": "ui/dupfinder.sc"
     }
 }

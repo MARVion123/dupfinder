@@ -5,6 +5,7 @@
 for candidate in \
     /usr/local/bin/python3 \
     /usr/bin/python3 \
+    /volume1/dupfinder/venv/bin/python3 \
     "$(command -v python3 2>/dev/null)"
 do
     [ -n "${candidate}" ] || continue

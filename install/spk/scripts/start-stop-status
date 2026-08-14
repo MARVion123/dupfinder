@@ -14,6 +14,20 @@ PKG_NAME="dupfinder"
 PORT="@PORT@"
 PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
 DATA_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+
+# The database lives in DATA_DIR by default. To keep an existing one somewhere
+# else - a previous systemd install, or simply off the system volume - write
+# that path into a file called `datadir` next to it:
+#
+#   echo /volume1/dupfinder/dupfinder-data > /var/packages/dupfinder/var/datadir
+#
+# The pid and log stay in DATA_DIR either way, so DSM can always find them.
+if [ -r "${DATA_DIR}/datadir" ]; then
+    configured=$(head -n 1 "${DATA_DIR}/datadir" | tr -d '\r\n')
+    [ -n "${configured}" ] && [ -d "${configured}" ] && DB_DIR="${configured}"
+fi
+DB_DIR="${DB_DIR:-${DATA_DIR}}"
+
 PID_FILE="${DATA_DIR}/dupfinder.pid"
 LOG_FILE="${DATA_DIR}/dupfinder.log"
 
@@ -28,35 +42,56 @@ fatal() {
 }
 
 # DSM ships python3 in some builds; the Package Center "Python 3" package
-# installs it under /usr/local/bin. Prefer whichever is new enough.
-find_python() {
-    for candidate in \
-        /usr/local/bin/python3 \
-        /usr/bin/python3 \
-        "$(command -v python3 2>/dev/null)"
-    do
-        [ -n "${candidate}" ] || continue
-        [ -x "${candidate}" ] || continue
-        "${candidate}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' \
-            >/dev/null 2>&1 || continue
-        echo "${candidate}"
-        return 0
-    done
-    return 1
+# installs it under /usr/local/bin, and a hand-made venv may sit on a volume.
+#
+# Two passes on purpose. The tool runs on the standard library alone, but
+# without Pillow there are no image previews and near-duplicate detection falls
+# back to fuzzy hashing on photos, which is both slower and worse. So take the
+# first interpreter that has Pillow, and only if none does settle for any
+# interpreter that is new enough.
+CANDIDATES="/usr/local/bin/python3
+/usr/bin/python3
+/volume1/dupfinder/venv/bin/python3"
+
+usable() {
+    [ -n "$1" ] && [ -x "$1" ] && \
+        "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' \
+            >/dev/null 2>&1
 }
 
+find_python() {
+    fallback=""
+    for candidate in ${CANDIDATES} "$(command -v python3 2>/dev/null)"; do
+        usable "${candidate}" || continue
+        if "${candidate}" -c 'import PIL' >/dev/null 2>&1; then
+            echo "${candidate}"
+            return 0
+        fi
+        [ -z "${fallback}" ] && fallback="${candidate}"
+    done
+    [ -n "${fallback}" ] || return 1
+    echo "${fallback}"
+    return 0
+}
+
+# A pid file left behind by a crash is cleared here rather than reported, so a
+# crashed service shows up in Package Center as stopped and can be started
+# again with the button. The crash itself is in LOG_FILE, which is where you
+# would have to look either way.
 daemon_status() {
     [ -r "${PID_FILE}" ] || return 1
     pid=$(cat "${PID_FILE}" 2>/dev/null)
-    [ -n "${pid}" ] || return 1
-    kill -0 "${pid}" 2>/dev/null || return 1
+    if [ -z "${pid}" ] || ! kill -0 "${pid}" 2>/dev/null; then
+        rm -f "${PID_FILE}"
+        return 1
+    fi
     return 0
 }
 
 start_daemon() {
     daemon_status && return 0
 
-    mkdir -p "${DATA_DIR}" 2>/dev/null
+    mkdir -p "${DATA_DIR}" "${DB_DIR}" 2>/dev/null
 
     # The daemon's stdout/stderr are redirected into the log. If that file is
     # not writable the redirection fails, the process never starts, and there
@@ -101,7 +136,8 @@ start_daemon() {
     cd "${PKG_DIR}" || { fatal "Cannot enter ${PKG_DIR}."; return 1; }
 
     log "    port    : ${PORT}"
-    env DUPFINDER_DATA_DIR="${DATA_DIR}" \
+    log "    database: ${DB_DIR}"
+    env DUPFINDER_DATA_DIR="${DB_DIR}" \
         PYTHONPATH="${PKG_DIR}" \
         PYTHONUNBUFFERED=1 \
         ${prefix} "${python_bin}" -m dupfinder serve --port "${PORT}" \
@@ -163,10 +199,7 @@ case "$1" in
         if daemon_status; then
             exit 0
         fi
-        if [ -r "${PID_FILE}" ]; then
-            exit 1          # stale pid file: the process really did die
-        fi
-        exit 3              # cleanly stopped
+        exit 3
         ;;
     log)
         echo "${LOG_FILE}"

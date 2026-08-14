@@ -1,18 +1,52 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Build a Synology DSM 7 package (.spk) for Duplicate File Finder.
 
     python3 install/spk/build_spk.py
 
-Produces install/spk/dist/dupfinder-<version>.spk
+Produces install/spk/dist/dupfinder-<version>-<build>.spk
 
-A .spk is an uncompressed tar containing INFO (first), package.tgz (the payload
+A .spk is an uncompressed tar containing INFO, package.tgz (the payload
 extracted to /var/packages/dupfinder/target), the control scripts, the conf
 directory and two PNG icons. Everything is assembled here rather than with tar
 so the executable bits on the scripts survive being built on Windows.
+
+Layout produced:
+
+    INFO                        metadata, including the md5 of package.tgz
+    PACKAGE_ICON.PNG            64x64, shown in Package Center
+    PACKAGE_ICON_256.PNG        256x256
+    package.tgz
+        dupfinder/              the application itself
+        ui/config               the DSM main-menu and desktop shortcut
+        ui/dupfinder.sc         firewall port description
+        ui/images/*.png         shortcut icons, seven sizes
+    scripts/*                   install and start-stop-status scripts
+    conf/privilege              which user the service runs as
+    conf/resource               points DSM at ui/dupfinder.sc
+
+The shape of this package follows SynoCommunity's spksrc, which is the only
+DSM 7 packaging that is demonstrably in the field. Five things were wrong for
+long enough to be worth naming, since none of them produces a usable error
+message:
+
+  * package.tgz was written through the same helper as the shell scripts, so
+    it had its CRLF pairs rewritten - inside a gzip stream. The payload was
+    corrupt and DSM could not unpack it. This is the one that mattered, and it
+    appeared and vanished between builds, because whether compressed output
+    happens to contain 0x0D 0x0A is close to a coin toss. tests/test_spk.py
+    exists for this.
+  * INFO had no `checksum`. DSM validates package.tgz against it.
+  * INFO had no `support_conf_folder="yes"` while the package shipped conf/.
+  * conf/resource pointed `protocol-file` at "conf/dupfinder.sc". The path is
+    resolved inside the installed package, not inside the .spk, so the file has
+    to live in the payload.
+  * PACKAGE_ICON.PNG was 72x72. That is the DSM 6 size; DSM 7 wants 64x64.
 """
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import io
 import json
 import os
@@ -27,20 +61,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 PKG_NAME = "dupfinder"
-BUILD_NUMBER = "0009"
+BUILD_NUMBER = "0010"
 
-# Bisection mode. Every attempt at this package so far failed at the same
-# stage with the same useless message, and four guesses at the cause were all
-# wrong. --minimal builds the leanest package DSM will accept - no firewall
-# registration, no resource file, no Open button - so the extras can be added
-# back one at a time until one of them breaks it. Guessing had its turn.
-MINIMAL = "--minimal" in sys.argv
+# Names the entry in ui/config. DSM uses it for the main-menu shortcut and for
+# Package Center's "Open" button, so INFO and ui/config have to agree on it.
+DSM_APP_NAME = "com.marvion.dupfinder"
 
-# The single source of truth for the port. Substituted into INFO (so Package
-# Center's "Open" button points at it), into conf/dupfinder.sc (so DSM opens
-# it in the firewall) and into the start script (passed to `serve --port`).
-# Change it here if 8777 clashes with something else on the NAS, then rebuild.
+# The single source of truth for the port. Substituted into INFO, into
+# ui/config (the shortcut), into ui/dupfinder.sc (the firewall rule) and into
+# the start script, so the port DSM advertises and the port the daemon binds
+# cannot drift apart. Change it here if 8777 clashes, then rebuild.
 PORT = "8777"
+
+# Sizes DSM asks for when drawing the shortcut: menu, desktop, search results.
+UI_ICON_SIZES = (16, 24, 32, 48, 64, 72, 256)
+
 
 # --- INFO ------------------------------------------------------------------
 
@@ -51,18 +86,18 @@ def read_version() -> str:
     return ns["__version__"]
 
 
-def build_info(version: str) -> str:
+def build_info(version: str, checksum: str) -> str:
     fields = [
         ("package", PKG_NAME),
         ("version", "%s-%s" % (version, BUILD_NUMBER)),
         ("os_min_ver", "7.0-40000"),
         ("arch", "noarch"),
-        ("displayname", "Duplicate File Finder for Synology NAS"),
+        ("displayname", "Duplicate File Finder"),
         ("description",
          "Find duplicate and near-duplicate files anywhere under a directory "
          "you choose, see how similar they are, and remove the copies you tick. "
          "Deletions are quarantined and reversible by default."),
-        ("maintainer", "dupfinder"),
+        ("maintainer", "MARVion123"),
         ("thirdparty", "yes"),
         # Synology's docs call `startable` deprecated since 6.1-14907 (use
         # `ctl_stop`) and say both default to "yes". Empirically that is wrong
@@ -72,37 +107,78 @@ def build_info(version: str) -> str:
         # not startable". DSM evidently uses its presence to decide the package
         # has a service at all. Do not remove it again.
         ("startable", "yes"),
+        # The main-menu / desktop shortcut, and what "Open" launches.
+        ("dsmuidir", "ui"),
+        ("dsmappname", DSM_APP_NAME),
+        # Redundant with dsmappname for the Open button, but harmless and every
+        # shipping package carries them.
+        ("adminprotocol", "http"),
+        ("adminport", PORT),
+        ("adminurl", "/"),
+        # Required whenever the package ships a conf/ directory. Without it DSM
+        # silently ignores privilege and resource.
+        ("support_conf_folder", "yes"),
         ("silent_install", "no"),
         ("silent_upgrade", "no"),
         ("silent_uninstall", "no"),
         ("support_center", "no"),
         ("beta", "no"),
+        ("checksum", checksum),
     ]
-    if not MINIMAL:
-        # Gives Package Center an "Open" button pointing at the web UI.
-        fields += [("adminprotocol", "http"), ("adminport", PORT), ("adminurl", "/")]
     return "".join('%s="%s"\n' % (key, value) for key, value in fields)
 
 
 # --- payload ---------------------------------------------------------------
 
-def build_payload(tmp: str) -> str:
-    """package.tgz - extracted to /var/packages/dupfinder/target on install."""
-    path = os.path.join(tmp, "package.tgz")
-    source = os.path.join(REPO, PKG_NAME)
+def _substitute(data: bytes) -> bytes:
+    return data.replace(b"\r\n", b"\n").replace(b"@PORT@", PORT.encode())
 
-    def keep(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        base = os.path.basename(info.name)
-        if base == "__pycache__" or base.endswith((".pyc", ".pyo")):
-            return None
+
+def build_payload(tmp: str) -> tuple[str, str]:
+    """package.tgz - extracted to /var/packages/dupfinder/target on install.
+
+    Returns (path, md5) - INFO has to carry the checksum of the exact bytes.
+    """
+    stage = os.path.join(tmp, "stage")
+    os.makedirs(stage)
+
+    shutil.copytree(
+        os.path.join(REPO, PKG_NAME), os.path.join(stage, PKG_NAME),
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+
+    ui = os.path.join(stage, "ui")
+    os.makedirs(os.path.join(ui, "images"))
+    for name in ("config", "%s.sc" % PKG_NAME):
+        with open(os.path.join(HERE, "ui", name), "rb") as fh:
+            body = _substitute(fh.read())
+        with open(os.path.join(ui, name), "wb") as fh:
+            fh.write(body)
+    # Fail the build rather than shipping a config DSM will choke on.
+    with open(os.path.join(ui, "config"), "r", encoding="utf-8") as fh:
+        shortcut = json.load(fh)
+    assert DSM_APP_NAME in shortcut[".url"], "ui/config and DSM_APP_NAME disagree"
+
+    for size in UI_ICON_SIZES:
+        with open(os.path.join(ui, "images", "%s-%d.png" % (PKG_NAME, size)), "wb") as fh:
+            fh.write(build_icon(size))
+
+    path = os.path.join(tmp, "package.tgz")
+
+    def keep(info: tarfile.TarInfo) -> tarfile.TarInfo:
         info.uid = info.gid = 0
         info.uname = info.gname = "root"
         info.mode = 0o755 if info.isdir() else 0o644
         return info
 
     with tarfile.open(path, "w:gz", format=tarfile.USTAR_FORMAT) as tar:
-        tar.add(source, arcname=PKG_NAME, filter=keep)
-    return path
+        for entry in sorted(os.listdir(stage)):
+            tar.add(os.path.join(stage, entry), arcname=entry, filter=keep)
+
+    digest = hashlib.md5()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return path, digest.hexdigest()
 
 
 # --- icons -----------------------------------------------------------------
@@ -130,7 +206,9 @@ def _rounded_rect(buf: bytearray, width: int, box, radius: float,
 
 
 def _render(size: int) -> bytes:
-    scale = 4
+    # 16px is too small for the supersampled detail to survive; keep the scale
+    # down there so the shape stays legible instead of turning to mush.
+    scale = 4 if size >= 32 else 8
     big = size * scale
     buf = bytearray(big * big * 4)
 
@@ -183,8 +261,60 @@ def _png(size: int, pixels: bytes) -> bytes:
             + chunk(b"IEND", b""))
 
 
+_ICON_CACHE: dict[int, bytes] = {}
+
+
 def build_icon(size: int) -> bytes:
-    return _png(size, _render(size))
+    # Nine icons come out of this and three of the sizes are asked for twice.
+    if size not in _ICON_CACHE:
+        _ICON_CACHE[size] = _png(size, _render(size))
+    return _ICON_CACHE[size]
+
+
+# --- verification ----------------------------------------------------------
+
+def verify(spk_path: str, checksum: str) -> None:
+    """Open the finished file the way DSM will and check it holds together.
+
+    Worth the twenty lines: the bug this replaces produced a .spk that looked
+    perfectly normal - right size, right members, right INFO - and whose
+    payload simply would not decompress. Nothing in the build complained, and
+    DSM's only response was "failed to acquire postinst worker".
+    """
+    required = {"INFO", "PACKAGE_ICON.PNG", "PACKAGE_ICON_256.PNG", "package.tgz",
+                "conf/privilege", "conf/resource", "scripts/start-stop-status"}
+    with tarfile.open(spk_path, "r") as spk:
+        names = spk.getnames()
+        missing = required - set(names)
+        if missing:
+            raise AssertionError("missing from the package: %s" % ", ".join(sorted(missing)))
+        if names[0] != "INFO":
+            raise AssertionError("INFO must be the first member, found %r" % names[0])
+
+        payload = spk.extractfile("package.tgz").read()
+        if hashlib.md5(payload).hexdigest() != checksum:
+            raise AssertionError("package.tgz does not match the checksum in INFO")
+
+        # Decompress the whole stream in one go rather than handing the bytes
+        # to tarfile with mode="r:gz". tarfile stops at the end-of-archive
+        # marker and never reads the gzip trailer, so it happily lists a
+        # damaged archive; gzip.decompress checks CRC32 and length and does
+        # not. Tested against a deliberately corrupted build, which tarfile
+        # accepted without complaint.
+        plain = gzip.decompress(payload)
+        with tarfile.open(fileobj=io.BytesIO(plain), mode="r:") as inner:
+            members = inner.getnames()
+        for wanted in ("dupfinder/__main__.py", "ui/config", "ui/%s.sc" % PKG_NAME,
+                       "ui/images/%s-256.png" % PKG_NAME):
+            if wanted not in members:
+                raise AssertionError("missing from the payload: %s" % wanted)
+
+        # A stray carriage return in a shell script makes DSM's shell fail with
+        # "\r: not found", which reads like the script is missing.
+        for name in names:
+            if name.startswith(("scripts/", "conf/")):
+                if b"\r" in spk.extractfile(name).read():
+                    raise AssertionError("%s still has CRLF line endings" % name)
 
 
 # --- assembly --------------------------------------------------------------
@@ -193,13 +323,13 @@ def main() -> int:
     version = read_version()
     dist = os.path.join(HERE, "dist")
     os.makedirs(dist, exist_ok=True)
-    suffix = BUILD_NUMBER + ("min" if MINIMAL else "")
-    spk_path = os.path.join(dist, "%s-%s-%s.spk" % (PKG_NAME, version, suffix))
+    spk_path = os.path.join(
+        dist, "%s-%s-%s.spk" % (PKG_NAME, version, BUILD_NUMBER))
 
     tmp = tempfile.mkdtemp(prefix="spk-")
     try:
-        payload = build_payload(tmp)
-        info = build_info(version)
+        payload, checksum = build_payload(tmp)
+        info = build_info(version, checksum)
 
         # Validate the JSON conf files before shipping them - a malformed
         # privilege or resource file fails the install with a useless error.
@@ -218,16 +348,25 @@ def main() -> int:
                 spk.addfile(info_obj, io.BytesIO(data))
 
             def add_file(name: str, path: str, mode: int = 0o644) -> None:
+                """Text files only - it rewrites line endings and @PORT@."""
                 with open(path, "rb") as fh:
-                    data = fh.read().replace(b"\r\n", b"\n")
-                add_bytes(name, data.replace(b"@PORT@", PORT.encode()), mode)
+                    add_bytes(name, _substitute(fh.read()), mode)
 
-            # INFO must come first so DSM can read the metadata without
-            # unpacking the whole archive.
+            # INFO first so DSM can read the metadata without unpacking the
+            # whole archive.
             add_bytes("INFO", info.encode("utf-8"))
-            add_bytes("PACKAGE_ICON.PNG", build_icon(72))
+            add_bytes("PACKAGE_ICON.PNG", build_icon(64))
             add_bytes("PACKAGE_ICON_256.PNG", build_icon(256))
-            add_file("package.tgz", payload)
+            # Verbatim, and emphatically not through add_file. Until this build
+            # the payload went through the same CRLF rewrite as the shell
+            # scripts, so every 0x0D 0x0A pair inside the gzip stream was
+            # silently turned into a single 0x0A. A compressed archive of this
+            # size contains that pair with near certainty, which corrupted
+            # package.tgz - differently on every build, since it depends on the
+            # compressed bytes. That is the "failed to acquire postinst worker"
+            # that came and went for no visible reason.
+            with open(payload, "rb") as fh:
+                add_bytes("package.tgz", fh.read())
 
             # The replace/upgrade scripts are no-ops but must be present: DSM
             # takes the replace path whenever any previous install of this
@@ -239,18 +378,17 @@ def main() -> int:
                 add_file("scripts/" + name,
                          os.path.join(HERE, "scripts", name), mode=0o755)
 
-            # privilege is the only conf file DSM genuinely needs. resource
-            # and the .sc file exist to register the port with the firewall,
-            # and that registration happens in the very stage where every
-            # install has been dying.
-            conf = ["privilege"] if MINIMAL else ["privilege", "resource", "dupfinder.sc"]
-            for name in conf:
+            for name in ("privilege", "resource"):
                 add_file("conf/" + name, os.path.join(HERE, "conf", name))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    print("built %s (%.1f KiB)%s" % (spk_path, os.path.getsize(spk_path) / 1024.0,
-                                     "  [minimal]" if MINIMAL else ""))
+    verify(spk_path, checksum)
+
+    print("built %s (%.1f KiB)" % (spk_path, os.path.getsize(spk_path) / 1024.0))
+    print("  payload md5 : %s  (verified, decompresses cleanly)" % checksum)
+    print("  port        : %s" % PORT)
+    print("  shortcut    : %s" % DSM_APP_NAME)
     return 0
 
 

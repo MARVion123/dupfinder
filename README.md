@@ -97,28 +97,83 @@ destination and outcome.
 
 ### Recommended: Package Center (`.spk`)
 
+This gets you a tile in Package Center with **Start**, **Stop** and **Open**,
+plus an icon in the DSM main menu that you can drag onto the desktop. Both open
+the web UI on whatever address you reached DSM at, so the shortcut keeps working
+over LAN, VPN and QuickConnect.
+
 Build the package on any machine with Python 3:
 
 ```sh
-python3 install/spk/build_spk.py     # -> install/spk/dist/dupfinder-1.0.0-0001.spk
+python3 install/spk/build_spk.py     # -> install/spk/dist/dupfinder-1.0.0-0010.spk
+python3 tests/test_spk.py            # optional, but see "A word on the payload"
 ```
 
 In DSM: **Package Center → Settings → Trust Level → Any publisher**, then
 **Manual Install** and upload the `.spk`. Requires **Python 3** from Package
 Center — the install refuses early with a message if it is missing.
 
+If the main-menu icon does not appear, sign out of DSM and back in; the menu is
+cached per session.
+
 Config and database live in `/var/packages/dupfinder/var`; the log is
-`/var/packages/dupfinder/var/dupfinder.log`.
+`/var/packages/dupfinder/var/dupfinder.log`. To keep a database that already
+exists somewhere else — say from a previous systemd install — point the package
+at it instead of starting over:
 
-**Permissions.** DSM 7 refuses to install third-party packages that ask to run
-as `root`, so the service runs as its own package user. That user has no access
-to your shares until you grant it: *Control Panel → Shared Folder → \<share\> →
-Edit → Permissions → System internal user → `dupfinder` → Read/Write*. Do this
-for every share you want to scan — the scan silently skips what it cannot read,
-and deletion fails on what it cannot write.
+```sh
+echo /volume1/dupfinder/dupfinder-data > /var/packages/dupfinder/var/datadir
+```
 
-If you would rather not manage per-share permissions, use the systemd install
-below instead; it runs as `root` and sees everything.
+#### Installing over SSH instead
+
+Package Center's Manual Install reports failures as "failed to install" and
+nothing more. `install/spk/install-spk.sh` does the same job and prints what DSM
+actually says at each step:
+
+```sh
+sudo sh install/spk/install-spk.sh dupfinder-1.0.0-0010.spk
+sudo sh install/spk/install-spk.sh --status    # what DSM currently thinks
+sudo sh install/spk/install-spk.sh --clean     # remove leftovers, keep the database
+```
+
+`--clean` matters more than it sounds. A half-failed install leaves DSM
+contradicting itself — `synopkg list` shows the package while `synopkg status`
+answers `non_installed` — and from then on *every* further install fails,
+because DSM believes the package is already there. Nothing fixes it but removing
+the directories, which is what `--clean` does. It keeps `@appdata`, so your
+database and scan history survive.
+
+It also stops the systemd service first if you have one, since both want
+port 8777.
+
+#### Permissions
+
+DSM 7 refuses to install third-party packages that ask to run as `root` unless
+Synology signed them, so the service runs as its own package user. That user has
+no access to your shares until you grant it: *Control Panel → Shared Folder →
+\<share\> → Edit → Permissions → System internal user → `dupfinder` →
+Read/Write*. Do this for every share you want to scan — the scan silently skips
+what it cannot read, and deletion fails on what it cannot write.
+
+That restriction is the whole reason the systemd install below still exists. It
+runs as `root` and sees everything, at the cost of the Package Center tile.
+Which one you want depends on whether you would rather click through a
+permissions dialog once per share, or give the tool the run of the NAS.
+
+#### A word on the payload
+
+Builds 0004 through 0009 shipped a corrupt `package.tgz` and could not be
+installed at all. The build helper that strips Windows line endings from the
+shell scripts was also being applied to the compressed payload, which quietly
+destroyed the gzip stream. DSM's only response was `failed to acquire postinst
+worker`, which points nowhere near the cause, and the fault came and went
+between builds because it depends on whether the compressed bytes happen to
+contain the pair `0D 0A`.
+
+`build_spk.py` now decompresses and checksums its own output before reporting
+success, and `tests/test_spk.py` feeds it four kinds of damaged package to
+confirm it says no. If you ever hand-edit a `.spk`, run that test.
 
 ### Alternative: systemd service
 
@@ -323,6 +378,12 @@ npm test                 # 34 checks; screenshots land in tests/ui/screenshots/
 It fails the run on any uncaught JS exception, `console.error`, or HTTP 4xx/5xx
 the page triggers, not just on a failed assertion.
 
+The DSM package has its own test, which needs nothing but Python:
+
+```sh
+python3 tests/test_spk.py    # builds the .spk and takes it apart again
+```
+
 ## Performance notes
 
 - The scanner is deliberately single-threaded. On a NAS the disk is the
@@ -356,7 +417,10 @@ LICENSE         PolyForm Noncommercial 1.0.0
 install/        systemd unit, DSM installer, Dockerfile, compose file
   deploy.sh     git pull -> verify -> swap -> health check -> roll back
   spk/          Synology package sources + build_spk.py
+    ui/         DSM main-menu shortcut + firewall port description
+    install-spk.sh  install over SSH, and clean up after a failed one
 tests/ui/       headless-browser smoke test (Playwright)
+tests/test_spk.py  DSM package integrity checks
 ```
 
 ---

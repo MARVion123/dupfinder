@@ -1,0 +1,16 @@
+{
+    ".url": {
+        "com.marvion.dupfinder": {
+            "title": "Duplicate File Finder",
+            "desc": "Find duplicate and near-duplicate files on your NAS",
+            "icon": "images/dupfinder-{0}.png",
+            "type": "url",
+            "protocol": "http",
+            "port": "@PORT@",
+            "url": "/",
+            "allUsers": true,
+            "grantPrivilege": "all",
+            "advanceGrantPrivilege": true
+        }
+    }
+}
