@@ -22,11 +22,33 @@ DATA_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
 #   echo /volume1/dupfinder/dupfinder-data > /var/packages/dupfinder/var/datadir
 #
 # The pid and log stay in DATA_DIR either way, so DSM can always find them.
-if [ -r "${DATA_DIR}/datadir" ]; then
-    configured=$(head -n 1 "${DATA_DIR}/datadir" | tr -d '\r\n')
-    [ -n "${configured}" ] && [ -d "${configured}" ] && DB_DIR="${configured}"
+#
+# Every outcome below is recorded. The first version of this just dropped an
+# override it could not use and carried on with the default, which looked
+# exactly like the file never having been written - and the reason it usually
+# cannot use one is invisible from a root shell: this script runs as the
+# package user, so a directory that user cannot traverse *to* fails the test
+# even when the directory itself belongs to it.
+DATADIR_NOTE=""
+DB_DIR="${DATA_DIR}"
+if [ -e "${DATA_DIR}/datadir" ]; then
+    if [ ! -r "${DATA_DIR}/datadir" ]; then
+        DATADIR_NOTE="datadir exists but is not readable by $(id -un 2>/dev/null); using the default"
+    else
+        configured=$(head -n 1 "${DATA_DIR}/datadir" | tr -d '\r\n')
+        configured=${configured%"${configured##*[![:space:]]}"}    # strip trailing blanks
+        if [ -z "${configured}" ]; then
+            DATADIR_NOTE="datadir is empty; using the default"
+        elif [ ! -d "${configured}" ]; then
+            DATADIR_NOTE="datadir points at '${configured}', which this user cannot see as a directory - check the permissions on every folder above it; using the default"
+        elif [ ! -w "${configured}" ]; then
+            DATADIR_NOTE="datadir points at '${configured}', which this user cannot write to; using the default"
+        else
+            DB_DIR="${configured}"
+            DATADIR_NOTE="datadir in use: ${DB_DIR}"
+        fi
+    fi
 fi
-DB_DIR="${DB_DIR:-${DATA_DIR}}"
 
 PID_FILE="${DATA_DIR}/dupfinder.pid"
 LOG_FILE="${DATA_DIR}/dupfinder.log"
@@ -106,6 +128,7 @@ start_daemon() {
 
     log "--- start requested"
     log "    user    : $(id -un 2>/dev/null || echo unknown)"
+    [ -n "${DATADIR_NOTE}" ] && log "    datadir : ${DATADIR_NOTE}"
     log "    pkg dir : ${PKG_DIR}"
     log "    data dir: ${DATA_DIR}"
 
