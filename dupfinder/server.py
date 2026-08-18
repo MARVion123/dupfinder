@@ -227,6 +227,14 @@ class App:
         if (query.get("suggested_only") or ["0"])[0] in ("1", "true"):
             where.append("s.group_id IS NOT NULL")
 
+        # Only groups that still have at least two live (present) files are an
+        # actionable duplicate set. Once a delete/quarantine/link resolves a
+        # group down to a single remaining copy it drops out of the list — this
+        # is what makes the grid update the moment a deletion goes through.
+        where.append(
+            "(SELECT COUNT(*) FROM group_members gm JOIN files gf ON gf.id = gm.file_id "
+            "WHERE gm.group_id = g.id AND gf.status = 'present') >= 2")
+
         sort = (query.get("sort") or ["wasted"])[0]
         column = SORT_COLUMNS.get(sort, SORT_COLUMNS["wasted"])
         direction = "ASC" if (query.get("dir") or ["desc"])[0].lower() == "asc" else "DESC"
@@ -249,12 +257,36 @@ class App:
         )
         groups = [dict(r) for r in rows]
         for group in groups:
-            group["files"] = self._members(group["id"])
+            files = [dict(f) for f in self._members(group["id"])]
+            group["files"] = files
+            # file_count/wasted_bytes are frozen at scan time; after a deletion
+            # they are stale. Recompute from the copies that are actually still
+            # present so the row shows reality (deleted copies remain listed,
+            # struck through, but no longer count toward waste).
+            present = [f for f in files if f.get("status") == "present"]
+            sizes = [f["size"] for f in present]
+            group["file_count"] = len(present)
+            group["max_size"] = max(sizes) if sizes else 0
+            group["wasted_bytes"] = (sum(sizes) - max(sizes)) if len(sizes) >= 2 else 0
+            group["folder_span"] = len({f["parent"] for f in present})
 
+        # Summary mirrors the same present-only accounting so the header totals
+        # drop as soon as duplicates are removed.
         summary = self.db.one(
-            """SELECT COUNT(*) AS groups, COALESCE(SUM(wasted_bytes),0) AS wasted,
-                      COALESCE(SUM(file_count),0) AS files
-               FROM groups WHERE scan_id=?""",
+            """SELECT COUNT(*) AS groups,
+                      COALESCE(SUM(pw), 0) AS wasted,
+                      COALESCE(SUM(pc), 0) AS files
+               FROM (
+                 SELECT SUM(CASE WHEN f.status='present' THEN f.size ELSE 0 END)
+                          - MAX(CASE WHEN f.status='present' THEN f.size ELSE 0 END) AS pw,
+                        SUM(CASE WHEN f.status='present' THEN 1 ELSE 0 END) AS pc
+                 FROM groups g
+                 JOIN group_members gm ON gm.group_id = g.id
+                 JOIN files f ON f.id = gm.file_id
+                 WHERE g.scan_id = ?
+                 GROUP BY g.id
+                 HAVING pc >= 2
+               )""",
             (scan_id,),
         )
         return {

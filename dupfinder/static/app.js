@@ -523,8 +523,14 @@
             if (r.failed.length) msg += " · " + r.failed.length + " failed";
             toast(msg, r.failed.length > 0);
             // A simulation changed nothing, so the selection stays put - the
-            // point is to look at the log and then decide.
-            if (!r.dry_run) state.selected = {};
+            // point is to look at the log and then decide. A real delete clears
+            // the selection AND the header "select all" tick, which renderGrid
+            // never touches on its own.
+            if (!r.dry_run) {
+              state.selected = {};
+              var all = $("checkAll");
+              if (all) all.checked = false;
+            }
             loadGroups();
           }).catch(fail);
       });
