@@ -440,6 +440,55 @@ async function run() {
     step("no horizontal overflow at 420px", overflow <= 0, `${overflow}px overflow`);
     await narrowPage.screenshot({ path: path.join(SHOTS, "13-narrow.png"), fullPage: true });
     await narrow.close();
+
+    // 11. Emptying the database - last, because it removes what the
+    //     checks above need on screen. The first draft ran it in the
+    //     middle and the dark-mode check then waited 30s for a group row
+    //     that no longer existed.
+    // The destructive one, so it is exercised last of the settings and the
+    // confirm dialog is answered rather than suppressed.
+    const before = await (await fetch(`${BASE}/api/database/usage`)).json();
+    step("database usage reports rows", before.counts.files > 0,
+      `${before.counts.files} file rows, ${before.scans} scan(s)`);
+
+    await page.click("#btnSettings");
+    await page.waitForSelector("#modalSettings:not(.hidden)");
+    await page.waitForFunction(
+      () => !/Reading/.test(document.getElementById("dbUsage").textContent));
+    const usageText = await page.locator("#dbUsage").textContent();
+    step("settings show what the database holds", /scan\(s\)/.test(usageText), usageText.trim());
+
+    // Refuse once, to prove the button cannot fire without an answer.
+    page.once("dialog", d => d.dismiss());
+    await page.click("#btnClearDb");
+    await page.waitForTimeout(300);
+    const afterDismiss = await (await fetch(`${BASE}/api/database/usage`)).json();
+    step("cancelling the confirm changes nothing",
+      afterDismiss.counts.files === before.counts.files,
+      `${afterDismiss.counts.files} file rows still there`);
+
+    page.once("dialog", d => d.accept());
+    await page.click("#btnClearDb");
+    // Poll the API for the state the click is supposed to produce. The first
+    // draft waited on a condition that was already true before the click, so it
+    // returned instantly and measured the database as it was beforehand.
+    let cleared = null;
+    for (let i = 0; i < 40; i++) {
+      cleared = await (await fetch(`${BASE}/api/database/usage`)).json();
+      if (cleared.scans === 0 && cleared.counts.files === 0) break;
+      await page.waitForTimeout(250);
+    }
+    step("emptying removes every scan", cleared.scans === 0, `${cleared.scans} scan(s)`);
+    step("emptying removes the file rows", cleared.counts.files === 0,
+      `${cleared.counts.files} rows`);
+    step("emptying removes the action log", cleared.counts.actions === 0,
+      `${cleared.counts.actions} entries`);
+    step("emptying leaves the settings alone",
+      (await (await fetch(`${BASE}/api/config`)).json()).fuzzy_max_bytes === 33554432,
+      "fuzzy_max_bytes survived");
+    await shot("13-database-emptied");
+    await page.click("#modalSettings [data-close]");
+
   } catch (err) {
     // Capture the page as it was when the step failed, before tearing down.
     try { await shot("99-failure"); } catch { /* page may already be gone */ }

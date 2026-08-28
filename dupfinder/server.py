@@ -102,6 +102,8 @@ class App:
                 return self.api_actions(query)
             if path == "/api/thumb":
                 return self.api_thumb(query)
+            if path == "/api/database/usage":
+                return self.api_database_usage()
             if path == "/api/folders":
                 return self.api_folders(query)
             m = re.fullmatch(r"/api/group/(\d+)", path)
@@ -124,6 +126,8 @@ class App:
                 return self.actions.restore(list(body.get("action_ids") or []))
             if path == "/api/quarantine/empty":
                 return self.actions.empty_quarantine(int(body["scan_id"]))
+            if path == "/api/database/clear":
+                return self.api_database_clear(bool(body.get("keep_cache")))
         raise ApiError("No route for %s %s" % route, 404)
 
     # -- endpoints ------------------------------------------------------
@@ -135,6 +139,40 @@ class App:
             "ai": self.ai.status(),
             "pillow": hashing.pillow_available(),
             "roots": available_roots(self.config["roots_allowlist"]),
+        }
+
+    def api_database_usage(self):
+        """What the database is holding, so the dialog can say it in numbers."""
+        info = self.db.usage()
+        return {
+            "bytes_on_disk": info["bytes_on_disk"],
+            "counts": info["counts"],
+            "scans": len(info["scans"]),
+            "path": self.config.db_path,
+        }
+
+    def api_database_clear(self, keep_cache=False):
+        # Emptying the database underneath a running scan would leave the scan
+        # writing rows into tables it no longer has a scan record in.
+        if self.scanner.is_running():
+            raise ApiError(
+                "A scan is running. Stop it first, then empty the database.", 409)
+        if self.ai.is_running():
+            raise ApiError(
+                "Suggestions are still being written. Stop them first.", 409)
+
+        before = self.db.usage()["bytes_on_disk"]
+        removed = self.db.clear(keep_cache=keep_cache)
+        # Deleting rows only frees pages inside the file; without this the
+        # database keeps its old size and nothing looks like it happened.
+        self.db.vacuum()
+        after = self.db.usage()["bytes_on_disk"]
+        return {
+            "removed": removed,
+            "rows": sum(removed.values()),
+            "bytes_before": before,
+            "bytes_after": after,
+            "kept_cache": bool(keep_cache),
         }
 
     def api_browse(self, query):

@@ -262,6 +262,17 @@ ul.browser li:hover { background: var(--accent-soft); }
    flex column, so it stacks below the input on its own. */
 .form label .hint { font-size: 11.5px; line-height: 1.45; opacity: 0.75; }
 
+/* Set apart from the settings above it: everything else in this dialog is a
+   preference you can change back, and this one is not. */
+.danger-zone {
+  margin-top: 6px; padding: 14px 16px; border-radius: 8px;
+  border: 1px solid var(--danger); background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+.danger-zone h3 { margin: 0 0 8px; font-size: 13px; letter-spacing: .02em; }
+.danger-zone .hint { display: block; font-size: 11.5px; line-height: 1.45; opacity: .8; margin: 8px 0; }
+.danger-zone .dbusage { margin: 0 0 10px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.danger-zone button { margin-top: 4px; }
+
 table.log td { font-size: 12px; }
 
 /* ---------- toast ---------- */

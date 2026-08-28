@@ -189,6 +189,20 @@
       </label>
       <label>Excluded folder names <textarea id="setExcludes" rows="3"></textarea></label>
       <label>Allowed roots <textarea id="setRoots" rows="2"></textarea></label>
+
+      <div class="danger-zone">
+        <h3>Database</h3>
+        <p class="dbusage" id="dbUsage">Reading…</p>
+        <label class="check"><input type="checkbox" id="setKeepCache"> Keep the hash cache</label>
+        <p class="hint">The next scan stays fast instead of re-reading everything. The
+        cache also records file paths, so leave this off if the point is to have the
+        paths gone.</p>
+        <p class="hint">Emptying removes every scan, its results and the action log.
+        It deletes no files: anything in a <code>.dupfinder-trash</code> folder stays
+        on disk, but the Restore buttons work from the action log, so afterwards you
+        would have to move those files back yourself. Settings are kept.</p>
+        <button id="btnClearDb" class="danger ghost">Empty the database</button>
+      </div>
     </div>
     <p class="muted" id="settingsNote"></p>
     <div class="modal-actions">

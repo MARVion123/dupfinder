@@ -258,10 +258,13 @@ class Database:
         """
         tables = ["scans", "files", "groups", "group_members", "suggestions",
                   "actions", "hash_cache", "verify_cache", "dir_cache"]
-        counts = {}
-        for table in tables:
-            row = self.one("SELECT COUNT(*) c FROM %s" % table)
-            counts[table] = row["c"] if row else 0
+        # One statement, so the nine numbers describe one moment. Counting them
+        # in a loop let a concurrent commit land between two of the queries, and
+        # the caller got a state that never existed - no scans left, but nine
+        # thousand file rows belonging to them.
+        row = self.one("SELECT %s" % ", ".join(
+            "(SELECT COUNT(*) FROM %s) AS %s" % (t, t) for t in tables))
+        counts = {t: (row[t] if row else 0) for t in tables}
         total = 0
         for suffix in ("", "-wal", "-shm"):
             try:
@@ -314,6 +317,41 @@ class Database:
                     "DELETE FROM verify_cache WHERE a_path IN (%s) OR b_path IN (%s)"
                     % (marks, marks), tuple(chunk) * 2)
             removed["cache"] = len(gone)
+        return removed
+
+    def clear(self, keep_cache: bool = False) -> dict:
+        """Empty the database of everything the scans produced.
+
+        This deletes records, never files. Anything sitting in a
+        `.dupfinder-trash` folder stays exactly where it is - but the action
+        log goes, and the Restore buttons work *from* that log, so afterwards
+        those files have to be moved back by hand. The dialog says so before
+        it calls this.
+
+        Settings live in config.json rather than here, and survive.
+
+        The caches are offered separately because the trade differs: keeping
+        them means the next scan is cheap, dropping them means the paths they
+        record are gone too, which is usually the point of emptying a database.
+
+        Deliberately does not reset the AUTOINCREMENT counters. Quarantine
+        folders are named after the scan that filled them, so restarting the
+        numbering would point a fresh scan at a `scan-1` directory that already
+        holds someone else's files.
+        """
+        tables = ["group_members", "groups", "suggestions", "files",
+                  "dir_cache", "actions", "scans"]
+        if not keep_cache:
+            tables += ["hash_cache", "verify_cache"]
+
+        removed = {}
+        conn = self.connect()
+        with self.write_lock:
+            for table in tables:
+                row = conn.execute("SELECT COUNT(*) FROM %s" % table).fetchone()
+                removed[table] = row[0] if row else 0
+                conn.execute("DELETE FROM %s" % table)
+            conn.commit()
         return removed
 
     def vacuum(self) -> None:

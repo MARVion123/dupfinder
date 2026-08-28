@@ -568,6 +568,7 @@
 
     $("btnSettings").addEventListener("click", openSettings);
     $("btnSaveSettings").addEventListener("click", saveSettings);
+    $("btnClearDb").addEventListener("click", clearDatabase);
     $("btnFolders").addEventListener("click", openFolders);
     $("btnLog").addEventListener("click", openLog);
     $("btnEmptyTrash").addEventListener("click", function () {
@@ -716,7 +717,70 @@
         ? "Pillow detected — perceptual image matching is available."
         : "Pillow is not installed, so image similarity is limited to fuzzy hashing.";
       $("modalSettings").classList.remove("hidden");
+      loadDbUsage();
     }).catch(fail);
+  }
+
+  // ------------------------------------------------------- database
+  function loadDbUsage() {
+    var el = $("dbUsage");
+    el.textContent = "Reading…";
+    return api("/api/database/usage").then(function (d) {
+      var c = d.counts || {};
+      state.dbUsage = d;
+      el.textContent = fmtBytes(d.bytes_on_disk) + " on disk — "
+        + fmtNum(d.scans) + " scan(s), "
+        + fmtNum(c.files) + " file rows, "
+        + fmtNum((c.hash_cache || 0) + (c.verify_cache || 0)) + " cache entries, "
+        + fmtNum(c.actions) + " log entries";
+    }).catch(function () { el.textContent = "Could not read the database size."; });
+  }
+
+  function clearDatabase() {
+    var keep = $("setKeepCache").checked;
+    var c = (state.dbUsage && state.dbUsage.counts) || {};
+    var lines = [
+      "Empty the database?",
+      "",
+      "This removes " + fmtNum(state.dbUsage && state.dbUsage.scans) + " scan(s) with their"
+        + " results and " + fmtNum(c.actions) + " action log entries.",
+      keep ? "The hash cache is kept, so the next scan stays fast."
+           : "The hash cache goes too, including the paths it records.",
+      "",
+      "No files are deleted. Anything already in a .dupfinder-trash folder stays"
+        + " on disk, but its Restore button goes with the log — you would have to"
+        + " move those back by hand.",
+      "",
+      "This cannot be undone."
+    ];
+    if (!window.confirm(lines.join("\n"))) return;
+
+    var btn = $("btnClearDb");
+    btn.disabled = true;
+    btn.textContent = "Emptying…";
+    api("/api/database/clear", { method: "POST", body: { keep_cache: keep } })
+      .then(function (r) {
+        toast("Database emptied — " + fmtNum(r.rows) + " rows removed, "
+              + fmtBytes(r.bytes_before) + " → " + fmtBytes(r.bytes_after));
+        // Everything on screen refers to rows that no longer exist.
+        state.scanId = null;
+        state.groups = [];
+        state.total = 0;
+        state.detail = {};
+        state.selected = {};
+        // loadGroups rather than renderGrid: the summary tiles above the table
+        // are filled from its response, and rendering alone left them showing
+        // the counts of groups that no longer exist.
+        loadGroups();
+        loadDbUsage();
+        loadScans();
+        pollStatus();
+      })
+      .catch(fail)
+      .then(function () {
+        btn.disabled = false;
+        btn.textContent = "Empty the database";
+      });
   }
 
   function saveSettings() {

@@ -538,6 +538,22 @@ reusable inside it. It rewrites the database, so it wants roughly the current
 size free on the volume and must not run during a scan. Measured: four scans of
 the same tree, 17.6 MB → **10.2 MB** with `--keep 1 --vacuum`.
 
+### Starting over
+
+*Settings → Database* shows what the database is holding and offers **Empty the
+database**: every scan, its results, and the action log, followed by a vacuum.
+There is a checkbox to keep the hash cache, which is the difference between the
+next scan being fast and the recorded paths being gone — usually the point of
+emptying it.
+
+It deletes no files. Anything already moved into a `.dupfinder-trash` folder
+stays on disk, but the Restore buttons work *from* the action log, so once that
+is gone those files have to be moved back by hand. Restore what you want first.
+Settings live in `config.json` and survive.
+
+The button refuses while a scan or a suggestion run is in progress, rather than
+pulling the tables out from under it.
+
 ---
 
 ## License
