@@ -939,28 +939,88 @@ class ScanEngine:
         return groups
 
     def _compare_fuzzy_buckets(self, info, threshold, pairs):
-        buckets = defaultdict(list)
-        for fid, meta in info.items():
-            bs = hashing.fuzzy_blocksize(meta["fuzzy"])
-            if bs:
-                buckets[bs].append(fid)
-        cap = int(self.config["fuzzy_bucket_cap"])
-        for bs, ids in buckets.items():
+        """Score every pair that could possibly match, and no others.
+
+        This used to compare everything in a block-size bucket against
+        everything else. That is quadratic, so it was capped at
+        `fuzzy_bucket_cap` files - and under a byte budget every file above the
+        budget gets the *same* block size, which made "a bucket" the whole
+        library. The cap then kept the 600 smallest files in it and silently
+        dropped the rest, which on a film collection is precisely the files
+        worth finding.
+
+        The index replaces both. A comparison returns 0 unless the two
+        signatures share a seven-character window, so indexing those windows
+        yields exactly the pairs worth scoring - no cap, nothing dropped, and
+        near-linear instead of quadratic.
+
+        Windows shared by more than `fuzzy_gram_cap` files are dropped first.
+        That part is not lossless: a window common to thousands of files
+        carries no information about any particular pair, and keeping it would
+        generate millions of pairs to score for nothing.
+        """
+        candidates = self._fuzzy_candidate_pairs(info)
+        for a, b in candidates:
             self._abort_if_cancelled()
-            # ssdeep signatures only compare across bs and 2*bs.
-            neighbours = ids + buckets.get(bs * 2, [])
-            if len(neighbours) > cap:
-                neighbours = sorted(neighbours, key=lambda i: info[i]["size"])[:cap]
-            for i in range(len(neighbours)):
-                self._abort_if_cancelled()
-                a = neighbours[i]
-                for j in range(i + 1, len(neighbours)):
-                    b = neighbours[j]
-                    if (min(a, b), max(a, b)) in pairs:
-                        continue
-                    score = self._pair_score(info[a], info[b])
-                    if score >= threshold:
-                        pairs[(min(a, b), max(a, b))] = score
+            key = (a, b) if a < b else (b, a)
+            if key in pairs:
+                continue
+            score = self._pair_score(info[a], info[b])
+            if score >= threshold:
+                pairs[key] = score
+
+    def _fuzzy_candidate_pairs(self, info):
+        """Pairs sharing at least one signature window, via a temporary index.
+
+        Kept in SQLite rather than a dictionary: a library of a million files
+        produces tens of millions of windows, and a Python dict of those would
+        cost more memory than a NAS has. The table is temporary, so it lives on
+        the scan's connection and disappears with it.
+        """
+        conn = self.db.connect()
+        with self.db.write_lock:
+            conn.execute("DROP TABLE IF EXISTS fuzzy_gram")
+            conn.execute(
+                "CREATE TEMP TABLE fuzzy_gram(level INTEGER, gram INTEGER, fid INTEGER)")
+
+            rows = []
+            indexed = 0
+            for fid, meta in info.items():
+                if not meta["fuzzy"]:
+                    continue
+                for level, gram in hashing.fuzzy_grams(meta["fuzzy"]):
+                    rows.append((level, gram, fid))
+                if len(rows) >= 20000:
+                    conn.executemany("INSERT INTO fuzzy_gram VALUES(?,?,?)", rows)
+                    rows = []
+                indexed += 1
+            if rows:
+                conn.executemany("INSERT INTO fuzzy_gram VALUES(?,?,?)", rows)
+            if indexed < 2:
+                conn.execute("DROP TABLE IF EXISTS fuzzy_gram")
+                conn.commit()
+                return []
+
+            cap = max(2, int(self.config["fuzzy_gram_cap"]))
+            conn.execute(
+                """DELETE FROM fuzzy_gram WHERE EXISTS (
+                       SELECT 1 FROM (SELECT level, gram FROM fuzzy_gram
+                                      GROUP BY level, gram HAVING COUNT(*) > ?) common
+                       WHERE common.level = fuzzy_gram.level
+                         AND common.gram  = fuzzy_gram.gram)""", (cap,))
+            conn.execute("CREATE INDEX idx_fuzzy_gram ON fuzzy_gram(level, gram)")
+            conn.commit()
+
+        found = conn.execute(
+            """SELECT DISTINCT a.fid, b.fid FROM fuzzy_gram a
+               JOIN fuzzy_gram b ON a.level = b.level AND a.gram = b.gram
+                                AND a.fid < b.fid""").fetchall()
+        with self.db.write_lock:
+            conn.execute("DROP TABLE IF EXISTS fuzzy_gram")
+            conn.commit()
+        self._log_note("compared %s candidate pairs from %s signatures"
+                       % ("{:,}".format(len(found)), "{:,}".format(indexed)))
+        return [(row[0], row[1]) for row in found]
 
     def _compare_image_buckets(self, info, threshold, pairs):
         images = [fid for fid, m in info.items() if m["dhash"]]

@@ -96,7 +96,14 @@ DEFAULTS = {
     # thousands of films and do not care about finding the same one in two
     # containers. Exact duplicates are unaffected either way.
     "fuzzy_skip_exts": [],
-    "fuzzy_bucket_cap": 600,       # max files compared pairwise inside one bucket
+    # Signature windows shared by more than this many files are ignored when
+    # building candidate pairs. A window common to thousands of files says
+    # nothing about any particular pair and would cost millions of
+    # comparisons. This is the only lossy step in the matching.
+    "fuzzy_gram_cap": 200,
+    # Still used for the image comparison, which is a straight all-pairs
+    # loop over perceptual hashes.
+    "fuzzy_bucket_cap": 600,
     # Worker processes for the near-duplicate pass. 0 = one per core less
     # one, so the NAS stays usable while it runs; 1 turns it off. Processes
     # and not threads because the CTPH loop is pure Python and holds the

@@ -320,6 +320,52 @@ def _score(sig_a: str, sig_b: str, blocksize: int) -> int:
     return min(score, cap, 100)
 
 
+_B64_INDEX = {ch: i for i, ch in enumerate(B64)}
+
+
+def _gram_key(gram: str) -> int:
+    """Pack seven signature characters into one integer.
+
+    The alphabet is 64 symbols, so seven of them fit in 42 bits exactly - this
+    is a change of representation, not a hash, and two different windows can
+    never collide into the same key.
+    """
+    key = 0
+    for ch in gram:
+        key = (key << 6) | _B64_INDEX.get(ch, 0)
+    return key
+
+
+def fuzzy_grams(signature: str | None, n: int = 7):
+    """(level, key) pairs a comparison could possibly match on.
+
+    _score gives up and returns 0 unless the two strings share a window of
+    seven characters, and it strips runs before looking. So two signatures can
+    only score above zero if they share one of these pairs - which makes an
+    index over them lossless, and lets the scanner skip comparing everything
+    with everything.
+
+    "level" is the block size the string describes: a signature "bs:s1:s2"
+    carries s1 at bs and s2 at 2*bs, and only strings at the same level are
+    ever compared.
+    """
+    parts = str(signature or "").split(":", 2)
+    if len(parts) != 3:
+        return
+    try:
+        blocksize = int(parts[0])
+    except ValueError:
+        return
+    for level, text in ((blocksize, _strip_runs(parts[1])),
+                        (blocksize * 2, _strip_runs(parts[2]))):
+        seen = set()
+        for i in range(len(text) - n + 1):
+            gram = text[i:i + n]
+            if gram not in seen:
+                seen.add(gram)
+                yield level, _gram_key(gram)
+
+
 def fuzzy_compare(hash_a: str | None, hash_b: str | None) -> int:
     """Similarity 0-100 between two fuzzy hashes."""
     if not hash_a or not hash_b:
@@ -331,12 +377,18 @@ def fuzzy_compare(hash_a: str | None, hash_b: str | None) -> int:
         bs_b = int(bs_b)
     except ValueError:
         return 0
+    # A signature "bs:s1:s2" describes the file at two levels: s1 at bs and s2
+    # at 2*bs. Only strings at the same level may be compared - the arguments
+    # below used to be crossed, so a pair whose block sizes differed by two
+    # scored its level-bs string against the other's level-4bs string and came
+    # out at 0 however alike the files were. Two signatures that were identical
+    # on their shared level scored zero.
     if bs_a == bs_b:
         return max(_score(a1, b1, bs_a), _score(a2, b2, bs_a * 2))
-    if bs_a == bs_b * 2:
-        return _score(a2, b1, bs_a)
-    if bs_b == bs_a * 2:
-        return _score(a1, b2, bs_b)
+    if bs_a == bs_b * 2:                    # a's low level is b's high level
+        return _score(a1, b2, bs_a)
+    if bs_b == bs_a * 2:                    # b's low level is a's high level
+        return _score(a2, b1, bs_b)
     return 0
 
 

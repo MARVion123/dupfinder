@@ -44,6 +44,26 @@ filename similarity, and — if Pillow is installed —
 a 64-bit perceptual hash catches re-encoded or resized photos that share no
 bytes at all.
 
+**Every candidate is compared, not the first few hundred.** Scoring every pair
+against every other is quadratic, so it used to be capped — and with a byte
+budget in force *every* file above the budget gets the same CTPH block size, so
+the "bucket" being capped was the entire library. It kept the 600 smallest
+files and never looked at the rest, which on a film collection is exactly the
+files worth finding.
+
+A comparison returns 0 unless the two signatures share a seven-character
+window, so an index over those windows yields exactly the pairs worth scoring.
+Nothing is dropped and nothing is capped. Measured on a population of 340
+signatures with 40 real matches: the index finds **all 40** while scoring 40
+candidate pairs out of 57,630 possible — 0.1% of the work. The old cap found
+**none** of them. Windows shared by more than `fuzzy_gram_cap` files are
+ignored, which is the one lossy step: a window common to thousands of files
+says nothing about any particular pair.
+
+Together with the worker processes this compounds — the comparison stage was
+what the parallel hashing was waiting on. The same benchmark went from 2.3× to
+**7.0×**.
+
 **Video that was re-encoded.** Byte-level hashing cannot see through a
 re-encode: the same film at two bitrates shares no bytes and scores 0. If
 `ffmpeg` and `ffprobe` are present, three frames are decoded at fixed fractions
@@ -484,6 +504,7 @@ The DSM package has its own test, which needs nothing but Python:
 
 ```sh
 python3 tests/test_spk.py             # builds the .spk and takes it apart again
+python3 tests/test_fuzzy_index.py     # the index finds what exhaustive comparison finds
 python3 tests/test_video_signature.py # frame hashing, no ffmpeg needed
 python3 tools/check_docs.py           # do the docs still describe this repository?
 ```
