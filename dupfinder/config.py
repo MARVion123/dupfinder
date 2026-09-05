@@ -83,11 +83,14 @@ DEFAULTS = {
     # start to differ past this point are reported as similar. That affects the
     # similarity column alone - exact duplicates go through the full MD5 and a
     # byte-for-byte comparison, and are unaffected. 0 = read the whole file.
-    # 4 MiB. Measured on ten films present twice with different containers:
-    # every pair is still found at 1 MiB, because a remux shares its payload
-    # from just past the header onward. 4 MiB leaves room for fatter headers
-    # and is still four times cheaper than 16. Halve it to halve the time.
-    "fuzzy_max_bytes": 4194304,
+    # 2 MiB, taken from the middle of the file rather than the start - see
+    # hashing.fuzzy_hash for why, and for the measurements. Halving the old
+    # 4 MiB budget halves the time, and the window still scores a remux higher
+    # than twice as many bytes read from the front did. The fuzzy pass runs at
+    # roughly 2.7 MiB/s against MD5's 379 - a factor of 140 - so this number,
+    # more than any other setting, decides whether a scan over a film library
+    # finishes.
+    "fuzzy_max_bytes": 2097152,
     # An escape hatch, empty by default. Extensions listed here skip the fuzzy
     # pass entirely - worth setting to the video extensions if you have
     # thousands of films and do not care about finding the same one in two

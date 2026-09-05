@@ -26,15 +26,21 @@ one affordable:
 | 3. Quick hash | MD5 of first 64 KiB + last 64 KiB + size | 128 KiB read |
 | 4. Full MD5 | Whole-file content hash of whatever survived | full read |
 | 5. Verify | **Byte-for-byte** comparison of every MD5 match | full read |
-| 6. Fuzzy | CTPH (ssdeep-style) + perceptual image hashing for *near* duplicates | full read |
+| 6. Fuzzy | CTPH (ssdeep-style) + perceptual image hashing for *near* duplicates | 2 MiB from the middle |
 
 Pass 5 is the "if not sure, go deeper" step. MD5 collisions are astronomically
 unlikely, but deletion is irreversible, so a match is proven rather than
 assumed. Groups that pass it are marked **✔ verified**.
 
 Pass 6 is what produces a *rating* rather than a yes/no. A pure-Python
-context-triggered piecewise hash scores content similarity 0–100; that score is
-blended with size ratio and filename similarity, and — if Pillow is installed —
+context-triggered piecewise hash scores content similarity 0–100, reading a
+2 MiB window from the **middle** of each file — the start of a media file is
+the container header, which is what two unrelated recordings from one camera
+share and what a remux rewrites. Measured against reading the first 2 MiB, on a
+payload wrapped in two different headers: 100% instead of 71%, and 91% instead
+of 72% when the header length differs too. Half the bytes, and above the
+threshold rather than below it. That score is blended with the size ratio and
+filename similarity, and — if Pillow is installed —
 a 64-bit perceptual hash catches re-encoded or resized photos that share no
 bytes at all.
 

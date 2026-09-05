@@ -711,6 +711,12 @@ class ScanEngine:
                     wants_ctph = False
             if is_image or wants_ctph:
                 out.append((row, is_image, wants_ctph))
+
+        # Biggest first. This pass is the one people stop early - it is orders
+        # of magnitude slower per byte than the others - and the order decides
+        # what they are left holding. Working down from the largest files means
+        # an hour of it has already found most of the reclaimable space.
+        out.sort(key=lambda item: item[0]["size"], reverse=True)
         return out
 
     def _fuzzy_pass(self, scan_id, exact, opts):

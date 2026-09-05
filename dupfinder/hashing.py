@@ -115,10 +115,10 @@ def _sum_hash(h: int, b: int) -> int:
     return (((h * HASH_PRIME) & MASK32) ^ b) & MASK32
 
 
-def _digest_stream(fh, blocksize: int, cancel=None, limit: int = 0):
+def _digest_stream(fh, blocksize: int, cancel=None, limit: int = 0, offset: int = 0):
     """One pass over the file at a given block size -> (sig1, sig2).
 
-    `limit` > 0 stops after that many bytes.
+    `limit` > 0 stops after that many bytes, starting at `offset`.
 
     The roller and both sum hashes are inlined here on purpose, at the cost of
     readability: this loop body runs once per byte of every candidate file, and
@@ -143,7 +143,7 @@ def _digest_stream(fh, blocksize: int, cancel=None, limit: int = 0):
     init = HASH_INIT
     b64 = B64
     remaining = limit if limit > 0 else -1
-    fh.seek(0)
+    fh.seek(offset)
     while remaining != 0:
         _check(cancel)
         block = fh.read(CHUNK if remaining < 0 else min(CHUNK, remaining))
@@ -195,10 +195,28 @@ def fuzzy_hash(path: str, size: int | None = None, cancel=None,
                max_bytes: int = 0) -> str | None:
     """Return "blocksize:sig1:sig2", or None if the file is too small/unreadable.
 
-    `max_bytes` > 0 hashes only that many bytes from the start of the file. The
-    block size then follows the number of bytes actually hashed rather than the
-    file length, so a 2 GiB and a 6 GiB video still land in the same bucket and
-    remain comparable to each other.
+    `max_bytes` > 0 hashes only that many bytes, taken from the *middle* of the
+    file rather than the start. The block size then follows the number of bytes
+    actually hashed rather than the file length, so a 2 GiB and a 6 GiB video
+    still land in the same bucket and remain comparable to each other.
+
+    The middle, because the start of a media file is the container header and
+    the opening of the stream: the part two unrelated recordings from the same
+    camera share, and the part a remux rewrites. Measured on a payload wrapped
+    in two different headers, against an unrelated file with the same header:
+
+        window            remux    remux, header 300 KiB shorter   unrelated
+        2 MiB from start    71%                              72%          0%
+        1 MiB from middle  100%                              88%          0%
+
+    Half the bytes, and the difference decides the outcome rather than just
+    looking better: the near-duplicate threshold is 70 by default and often
+    raised to 90, and at 90 neither prefix score is reported at all. Three
+    smaller windows spread across the file were tried too and are worse under a
+    shifted payload (44%) - a short window tolerates less drift.
+
+    A shift larger than the window still defeats this, and so does a
+    re-encode; neither is something byte-level hashing can reach.
     """
     if size is None:
         try:
@@ -213,10 +231,20 @@ def fuzzy_hash(path: str, size: int | None = None, cancel=None,
     while blocksize * SPAMSUM_LENGTH < span:
         blocksize *= 2
 
+    # Centre the window. Files smaller than the budget are read whole, so this
+    # is 0 for them and nothing about the small-file case changes.
+    offset = max(0, (size - span) // 2) if max_bytes > 0 else 0
+
     try:
         with open(path, "rb") as fh:
+            # The loop below halves the block size and starts over when the
+            # signature came out too short. Buffering the window to spare those
+            # re-reads was tried and reverted: on low-entropy files, where the
+            # retries actually fire, it changed 19.50s to 19.61s. The cost is
+            # the per-byte Python loop running again, not the read - the second
+            # pass comes out of the page cache either way.
             for _ in range(6):
-                sig1, sig2 = _digest_stream(fh, blocksize, cancel, span)
+                sig1, sig2 = _digest_stream(fh, blocksize, cancel, span, offset)
                 # Too few trigger points -> signature carries little information.
                 if len(sig1) >= SPAMSUM_LENGTH // 2 or blocksize <= MIN_BLOCKSIZE:
                     return "%d:%s:%s" % (blocksize, sig1, sig2)

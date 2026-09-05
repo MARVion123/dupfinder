@@ -156,6 +156,26 @@ class Database:
         self.write_lock = threading.Lock()
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    # The fuzzy signature depends on *where* in the file it was taken, and that
+    # is not visible from the signature itself: a prefix and a middle window of
+    # the same length produce the same block size and compare as though they
+    # described the same bytes. So the regime carries a number, and a cache
+    # written under an older one has its signatures dropped rather than
+    # silently compared against new ones.
+    FUZZY_REGIME = 2
+
+    def _migrate(self, conn) -> None:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= self.FUZZY_REGIME:
+            return
+        # Every database written before this change carries version 0, which is
+        # also what a brand new one has. Both are handled by the same update:
+        # on a fresh database it touches nothing.
+        conn.execute("UPDATE hash_cache SET fuzzy=NULL WHERE fuzzy IS NOT NULL")
+        conn.execute("PRAGMA user_version=%d" % self.FUZZY_REGIME)
+        conn.commit()
 
     def connect(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)

@@ -408,7 +408,10 @@ async function run() {
     const roots = await page.locator("#setRoots").inputValue();
     step("settings load current config", roots.includes(fx.tree), `roots: ${roots}`);
     const fuzzyMiB = await page.locator("#setFuzzyMiB").inputValue();
-    step("fuzzy byte budget shown in MiB", fuzzyMiB === "4", `${fuzzyMiB} MiB`);
+    // 2 MiB is the default since the fuzzy window moved to the middle of the
+    // file: half the bytes of the old 4 MiB prefix, and a better score on a
+    // remux. See hashing.fuzzy_hash.
+    step("fuzzy byte budget shown in MiB", fuzzyMiB === "2", `${fuzzyMiB} MiB`);
     await shot("11-settings");
     // Change it before saving: a field that only ever round-trips its default
     // would pass even if the save path dropped it entirely.
