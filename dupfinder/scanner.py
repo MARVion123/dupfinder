@@ -20,6 +20,7 @@ import fnmatch
 import json
 import os
 import re
+import sys
 import threading
 import time
 import traceback
@@ -896,8 +897,15 @@ class ScanEngine:
                                             None, None, fresh_fz, fresh_dh))
                     if fz or dh:
                         updates.append((fz, dh, row["id"]))
+                    # No path: nothing downstream reads it, and it is the
+                    # largest field. One of these exists per candidate for the
+                    # whole pass - at 300,000 candidates the difference is
+                    # hundreds of megabytes on a box that has a few gigabytes
+                    # in total. `ext` is interned because a library has a
+                    # handful of distinct extensions and no reason to hold
+                    # 300,000 copies of ".mp4".
                     info[row["id"]] = {
-                        "path": row["path"], "name": row["name"], "ext": row["ext"],
+                        "name": row["name"], "ext": sys.intern(row["ext"] or ""),
                         "size": row["size"], "fuzzy": fz, "dhash": dh,
                     }
                     self._bump("done")
@@ -999,7 +1007,7 @@ class ScanEngine:
             if indexed < 2:
                 conn.execute("DROP TABLE IF EXISTS fuzzy_gram")
                 conn.commit()
-                return []
+                return
 
             cap = max(2, int(self.config["fuzzy_gram_cap"]))
             conn.execute(
@@ -1011,16 +1019,30 @@ class ScanEngine:
             conn.execute("CREATE INDEX idx_fuzzy_gram ON fuzzy_gram(level, gram)")
             conn.commit()
 
-        found = conn.execute(
+        # Streamed rather than collected: a library can produce millions of
+        # candidate pairs and a Python list of those is 120 bytes each. The
+        # table is dropped once the cursor is exhausted, not before - dropping
+        # a table out from under an open cursor is not something to try.
+        cursor = conn.execute(
             """SELECT DISTINCT a.fid, b.fid FROM fuzzy_gram a
                JOIN fuzzy_gram b ON a.level = b.level AND a.gram = b.gram
-                                AND a.fid < b.fid""").fetchall()
-        with self.db.write_lock:
-            conn.execute("DROP TABLE IF EXISTS fuzzy_gram")
-            conn.commit()
-        self._log_note("compared %s candidate pairs from %s signatures"
-                       % ("{:,}".format(len(found)), "{:,}".format(indexed)))
-        return [(row[0], row[1]) for row in found]
+                                AND a.fid < b.fid""")
+        seen = 0
+        try:
+            while True:
+                batch = cursor.fetchmany(10000)
+                if not batch:
+                    break
+                seen += len(batch)
+                for row in batch:
+                    yield row[0], row[1]
+        finally:
+            cursor.close()
+            with self.db.write_lock:
+                conn.execute("DROP TABLE IF EXISTS fuzzy_gram")
+                conn.commit()
+            self._log_note("compared %s candidate pairs from %s signatures"
+                           % ("{:,}".format(seen), "{:,}".format(indexed)))
 
     def _compare_image_buckets(self, info, threshold, pairs):
         images = [fid for fid, m in info.items() if m["dhash"]]
