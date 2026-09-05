@@ -379,6 +379,151 @@ def pillow_available() -> bool:
     return _PIL_IMAGE is not None
 
 
+# ---------------------------------------------------------------------------
+# Video frames. Byte-level hashing cannot see through a re-encode at all - the
+# same film at two bitrates shares no bytes and scores 0 - so the only way to
+# recognise it is to look at the picture. ffmpeg decodes a few frames, Pillow
+# hashes them, and the frames are taken at fractions of the running time so two
+# encodes of the same material line up regardless of length in bytes.
+#
+# Both are optional. Without either, video falls back to CTPH, which still
+# catches a remux.
+# ---------------------------------------------------------------------------
+VIDEO_EXTS = {
+    ".mp4", ".m4v", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
+    ".mpg", ".mpeg", ".m2ts", ".mts", ".ts", ".vob", ".3gp", ".ogv", ".divx",
+}
+
+# Where the frames are taken from, as fractions of the duration. Not 0.0: the
+# opening seconds are often a logo or black, which every unrelated film shares.
+VIDEO_FRAMES = (0.15, 0.45, 0.75)
+VIDEO_SIG_PREFIX = "v1"
+
+_FFMPEG_CHECKED = False
+_FFMPEG = None
+_FFPROBE = None
+
+# DSM keeps its copies inside packages rather than on PATH.
+_FFMPEG_HINTS = (
+    "/var/packages/ffmpeg7/target/bin",
+    "/var/packages/ffmpeg6/target/bin",
+    "/var/packages/ffmpeg/target/bin",
+    "/var/packages/VideoStation/target/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+)
+
+
+def _find_tool(name):
+    import shutil as _shutil
+
+    found = _shutil.which(name)
+    if found:
+        return found
+    for folder in _FFMPEG_HINTS:
+        candidate = os.path.join(folder, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def ffmpeg_available() -> bool:
+    global _FFMPEG_CHECKED, _FFMPEG, _FFPROBE
+    if not _FFMPEG_CHECKED:
+        _FFMPEG_CHECKED = True
+        _FFMPEG = _find_tool("ffmpeg")
+        _FFPROBE = _find_tool("ffprobe")
+    return bool(_FFMPEG) and pillow_available()
+
+
+def video_duration(path: str) -> float:
+    """Seconds, or 0 if ffprobe cannot say."""
+    if not _FFPROBE:
+        return 0.0
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [_FFPROBE, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path],
+            capture_output=True, timeout=30, check=False)
+        return max(0.0, float(out.stdout.decode("ascii", "ignore").strip() or 0))
+    except Exception:
+        return 0.0
+
+
+def video_dhash(path: str, duration: float | None = None) -> str | None:
+    """Perceptual hash of a few frames: "v1:<hex>:<hex>:<hex>".
+
+    Returns None when ffmpeg or Pillow is missing, the file is not decodable,
+    or the duration is unknown - a guess at where to seek would compare frames
+    from unrelated moments, which is worse than no signal at all.
+    """
+    if not ffmpeg_available():
+        return None
+    import subprocess
+
+    seconds = video_duration(path) if duration is None else duration
+    if seconds <= 1:
+        return None
+
+    frames = []
+    for fraction in VIDEO_FRAMES:
+        # -ss before -i seeks by keyframe without decoding everything up to it,
+        # which is the difference between a fifth of a second and minutes.
+        try:
+            out = subprocess.run(
+                [_FFMPEG, "-v", "error", "-ss", "%.3f" % (seconds * fraction),
+                 "-i", path, "-frames:v", "1", "-vf", "scale=9:8",
+                 "-f", "image2pipe", "-vcodec", "png", "-"],
+                capture_output=True, timeout=60, check=False)
+        except Exception:
+            return None
+        if not out.stdout:
+            return None
+        frames.append(_dhash_png(out.stdout))
+    if any(f is None for f in frames):
+        return None
+    return ":".join([VIDEO_SIG_PREFIX] + frames)
+
+
+def _dhash_png(data: bytes) -> str | None:
+    """dHash of a 9x8 PNG already scaled by ffmpeg."""
+    try:
+        with _PIL_IMAGE.open(io.BytesIO(data)) as im:   # type: ignore[union-attr]
+            im = im.convert("L")
+            if im.size != (9, 8):
+                im = im.resize((9, 8))
+            px = list(im.getdata())
+    except Exception:
+        return None
+    bits = 0
+    for row in range(8):
+        base = row * 9
+        for col in range(8):
+            bits <<= 1
+            if px[base + col] > px[base + col + 1]:
+                bits |= 1
+    return "%016x" % bits
+
+
+def is_video_signature(sig) -> bool:
+    return bool(sig) and str(sig).startswith(VIDEO_SIG_PREFIX + ":")
+
+
+def video_compare(a: str | None, b: str | None) -> int:
+    """0-100 over the frames the two signatures have in common."""
+    if not is_video_signature(a) or not is_video_signature(b):
+        return 0
+    fa, fb = str(a).split(":")[1:], str(b).split(":")[1:]
+    if len(fa) != len(fb) or not fa:
+        return 0
+    scores = [dhash_similarity(x, y) for x, y in zip(fa, fb)]
+    # The mean, not the best frame: one matching still is a coincidence, three
+    # matching stills at the same points of the running time is the same film.
+    return int(round(sum(scores) / len(scores)))
+
+
 def image_dhash(path: str) -> str | None:
     """64-bit difference hash of an image, as 16 hex chars."""
     if not pillow_available():

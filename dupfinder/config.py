@@ -97,7 +97,18 @@ DEFAULTS = {
     # containers. Exact duplicates are unaffected either way.
     "fuzzy_skip_exts": [],
     "fuzzy_bucket_cap": 600,       # max files compared pairwise inside one bucket
+    # Worker processes for the near-duplicate pass. 0 = one per core less
+    # one, so the NAS stays usable while it runs; 1 turns it off. Processes
+    # and not threads because the CTPH loop is pure Python and holds the
+    # GIL - threads would take just as long on any number of cores.
+    "fuzzy_workers": 0,
     "image_similarity": True,      # perceptual hash for images (needs Pillow)
+    # Perceptual hash of a few video frames, taken at fractions of the
+    # running time so two encodes of the same material line up. Needs
+    # ffmpeg and ffprobe as well as Pillow, and turns itself off when they
+    # are missing. This is the only signal that survives a re-encode -
+    # byte-level hashing scores the same film at two bitrates at zero.
+    "video_similarity": True,
     # --- deletion ---
     # quarantine  -> move into <root>/.dupfinder-trash/<scan-id>/ (reversible)
     # recycle     -> move into the DSM share recycle bin (#recycle)

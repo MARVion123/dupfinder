@@ -302,3 +302,8 @@ tr.folder-pair.kin td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   word-break: break-all; line-height: 1.5;
 }
 .tag.kin { background: rgba(47,111,237,.14); color: var(--accent); font-weight: 600; }
+
+/* A line the scanner writes when it had to change plan - workers that would
+   not start, a pool that broke. Quiet, because it is information rather than a
+   problem the user has to act on. */
+#progStats .note { flex-basis: 100%; opacity: .7; font-size: 12px; }

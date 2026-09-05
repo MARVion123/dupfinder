@@ -123,7 +123,8 @@
         stat("Data seen", fmtBytes(scan.bytes_seen)) +
         stat("Hashed", fmtBytes(scan.bytes_hashed)) +
         stat("Reused from cache", fmtNum(scan.cache_hits)) +
-        stat("Groups so far", fmtNum(scan.groups_found));
+        stat("Groups so far", fmtNum(scan.groups_found)) +
+        (scan.note ? '<span class="note">' + esc(scan.note) + "</span>" : "");
     } else {
       panel.classList.add("hidden");
     }

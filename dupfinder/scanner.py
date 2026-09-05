@@ -31,6 +31,53 @@ from .safety import check_allowed
 
 BATCH = 400
 
+# How many candidates are resolved against the cache before the misses among
+# them are handed to the workers. Big enough that dispatch overhead disappears,
+# small enough that progress keeps moving and a cancel is noticed promptly.
+FUZZY_CHUNK = 256
+
+
+def _cpu_count() -> int:
+    """Cores this process may actually use, not what the box advertises."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))     # honours cgroup pinning
+    except AttributeError:
+        return max(1, os.cpu_count() or 1)
+
+
+def _chunks(seq, size):
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
+
+def _fuzzy_job(job):
+    """Hash one candidate. Runs in a worker process.
+
+    Lives at module level because that is what a worker can import. On Linux
+    the pool forks and this is academic; on Windows each worker starts a fresh
+    interpreter and re-imports the main module, which is why `python -m
+    dupfinder` guards its entry point - without that guard every worker would
+    start the whole program again.
+
+    Plain tuples in and out, on purpose: this crosses a process boundary, so
+    there is no database handle, no cancel event and no scanner state in here -
+    none of that would pickle, and sharing it would be wrong even if it did.
+    Cancellation is handled by the parent between chunks.
+    """
+    path, size, max_bytes, need_fz, need_dh = job
+    fz = dh = None
+    if need_fz:
+        try:
+            fz = hashing.fuzzy_hash(path, size, None, max_bytes)
+        except OSError:
+            fz = None
+    if need_dh:
+        ext = os.path.splitext(path)[1].lower()
+        dh = (hashing.video_dhash(path) if ext in hashing.VIDEO_EXTS
+              else hashing.image_dhash(path))
+    return fz, dh
+
+
 PHASES = [
     ("walk", "Indexing files"),
     ("size", "Grouping by size"),
@@ -166,6 +213,7 @@ class ScanEngine:
             "error": None,
             "cache_hits": 0,
             "reused_dirs": 0,
+            "note": "",
         }
 
     # -- public API ----------------------------------------------------
@@ -249,6 +297,50 @@ class ScanEngine:
     def _abort_if_cancelled(self):
         if self._cancel.is_set():
             raise Cancelled()
+
+    # -- parallel hashing ----------------------------------------------
+    def _open_pool(self, work_items):
+        """A process pool for the fuzzy pass, or None to stay on one core.
+
+        Not worth starting for a handful of files: on Windows and on DSM each
+        worker is a fresh interpreter, and that costs more than it saves until
+        there is real work to spread. Returns None on any failure - a NAS that
+        cannot fork should still finish the scan, just slower.
+        """
+        workers = int(self.config["fuzzy_workers"])
+        if workers <= 0:
+            # Leave a core for the rest of the NAS; this pass runs for hours
+            # and the box is usually also serving files while it does.
+            workers = max(1, _cpu_count() - 1)
+        if workers < 2 or work_items < FUZZY_CHUNK:
+            return None
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+
+            pool = ProcessPoolExecutor(max_workers=workers)
+        except Exception as exc:                        # noqa: BLE001
+            self._log_note("could not start workers (%s); hashing on one core" % exc)
+            return None
+        self._log_note("near-duplicate hashing across %d processes" % workers)
+        return pool
+
+    def _run_jobs(self, pool, jobs):
+        """Hash a batch, in the pool when there is one, in-process otherwise."""
+        if not jobs:
+            return []
+        if pool is None:
+            return [_fuzzy_job(job) for job in jobs]
+        try:
+            return list(pool.map(_fuzzy_job, jobs, chunksize=4))
+        except Exception as exc:                        # noqa: BLE001
+            # A broken pool must not lose the scan. Finish this batch here and
+            # let the caller carry on; the pool is shut down by the finally.
+            self._log_note("workers failed (%s); continuing on one core" % exc)
+            return [_fuzzy_job(job) for job in jobs]
+
+    def _log_note(self, message):
+        with self._lock:
+            self._status["note"] = message
 
     def _run(self, scan_id, root, opts):
         try:
@@ -682,16 +774,23 @@ class ScanEngine:
            possible partner within a 4x size window.
         """
         skip_exts = {str(e).lower() for e in self.config["fuzzy_skip_exts"]}
+        want_video = (bool(self.config["video_similarity"])
+                      and hashing.ffmpeg_available())
         picked = []
         for row in rows:
             if row["id"] in redundant:
                 continue
             ext = (row["ext"] or "").lower()
             is_image = want_images and ext in hashing.IMAGE_EXTS
+            is_video = want_video and ext in hashing.VIDEO_EXTS
+            # Video gets both signals, because they answer different questions:
+            # CTPH recognises the same file remuxed, frame hashes recognise the
+            # same film re-encoded, and neither sees what the other sees.
+            wants_perceptual = is_image or is_video
             wants_ctph = (not is_image and ext not in skip_exts
                           and (unlimited or row["size"] <= max_size))
-            if is_image or wants_ctph:
-                picked.append((row, is_image, wants_ctph))
+            if wants_perceptual or wants_ctph:
+                picked.append((row, wants_perceptual, wants_ctph))
 
         if max_bytes <= 0:
             return picked
@@ -749,47 +848,71 @@ class ScanEngine:
         info = {}
         updates = []
         cached_rows = []
-        for row, is_image, wants_ctph in candidates:
-            self._abort_if_cancelled()
-            self._set(current=row["path"])
-            cached = self.db.cache_get(row["path"], row["size"], row["mtime"])
-            fz = cached["fuzzy"] if cached else None
-            dh = cached["dhash"] if cached else None
+        # The CTPH loop is pure Python, so it holds the GIL and threads buy
+        # nothing here - this is the one pass that needs separate processes.
+        pool = self._open_pool(sum(1 for _r, _i, w in candidates if w))
+        try:
+            for chunk in _chunks(candidates, FUZZY_CHUNK):
+                self._abort_if_cancelled()
+                todo, done_now = [], []
+                for row, is_image, wants_ctph in chunk:
+                    cached = self.db.cache_get(row["path"], row["size"], row["mtime"])
+                    fz = cached["fuzzy"] if cached else None
+                    dh = cached["dhash"] if cached else None
 
-            # A signature cached under a larger byte budget carries a larger
-            # block size and would never bucket with freshly hashed files.
-            # Rehash rather than quietly compare across two regimes.
-            if fz and (hashing.fuzzy_blocksize(fz)
-                       > hashing.fuzzy_blocksize_for(row["size"], max_bytes)):
-                fz = None
+                    # A signature cached under a larger byte budget carries a
+                    # larger block size and would never bucket with freshly
+                    # hashed files. Rehash rather than quietly compare across
+                    # two regimes.
+                    if fz and (hashing.fuzzy_blocksize(fz)
+                               > hashing.fuzzy_blocksize_for(row["size"], max_bytes)):
+                        fz = None
+                    if not wants_ctph:
+                        fz = None
 
-            fresh_fz = fresh_dh = None
-            if wants_ctph and fz is None:
+                    need_fz = bool(wants_ctph and fz is None)
+                    need_dh = bool(is_image and dh is None)
+                    if need_fz or need_dh:
+                        todo.append((row, fz, dh, need_fz, need_dh))
+                    else:
+                        done_now.append((row, fz, dh, None, None))
+
+                if todo:
+                    self._set(current=todo[0][0]["path"])
+                results = self._run_jobs(
+                    pool,
+                    [(row["path"], row["size"], max_bytes, need_fz, need_dh)
+                     for row, _fz, _dh, need_fz, need_dh in todo])
+
+                computed = []
+                for (row, fz, dh, _nf, _nd), (fresh_fz, fresh_dh) in zip(todo, results):
+                    computed.append((row, fresh_fz if fresh_fz else fz,
+                                     fresh_dh if fresh_dh else dh,
+                                     fresh_fz, fresh_dh))
+
+                for row, fz, dh, fresh_fz, fresh_dh in done_now + computed:
+                    if fresh_fz or fresh_dh:
+                        cached_rows.append((row["path"], row["size"], row["mtime"],
+                                            None, None, fresh_fz, fresh_dh))
+                    if fz or dh:
+                        updates.append((fz, dh, row["id"]))
+                    info[row["id"]] = {
+                        "path": row["path"], "name": row["name"], "ext": row["ext"],
+                        "size": row["size"], "fuzzy": fz, "dhash": dh,
+                    }
+                    self._bump("done")
+                if len(updates) >= BATCH:
+                    self.db.executemany(
+                        "UPDATE files SET fuzzy=?, dhash=? WHERE id=?", updates)
+                    self.db.cache_put_many(cached_rows)
+                    updates = []
+                    cached_rows = []
+        finally:
+            if pool is not None:
                 try:
-                    fz = fresh_fz = hashing.fuzzy_hash(row["path"], row["size"],
-                                                       self._cancel, max_bytes)
-                except OSError:
-                    fz = None
-            elif not wants_ctph:
-                fz = None
-            if is_image and dh is None:
-                dh = fresh_dh = hashing.image_dhash(row["path"])
-            if fresh_fz or fresh_dh:
-                cached_rows.append((row["path"], row["size"], row["mtime"],
-                                    None, None, fresh_fz, fresh_dh))
-            if fz or dh:
-                updates.append((fz, dh, row["id"]))
-            info[row["id"]] = {
-                "path": row["path"], "name": row["name"], "ext": row["ext"],
-                "size": row["size"], "fuzzy": fz, "dhash": dh,
-            }
-            self._bump("done")
-            if len(updates) >= BATCH:
-                self.db.executemany(
-                    "UPDATE files SET fuzzy=?, dhash=? WHERE id=?", updates)
-                self.db.cache_put_many(cached_rows)
-                updates = []
-                cached_rows = []
+                    pool.shutdown(wait=False, cancel_futures=True)
+                except TypeError:
+                    pool.shutdown(wait=False)   # cancel_futures is 3.9+
         if updates:
             self.db.executemany("UPDATE files SET fuzzy=?, dhash=? WHERE id=?", updates)
         self.db.cache_put_many(cached_rows)
@@ -852,8 +975,16 @@ class ScanEngine:
                 key = (min(a, b), max(a, b))
                 if key in pairs:
                     continue
-                score = hashing.dhash_similarity(info[a]["dhash"], info[b]["dhash"])
-                if score >= max(threshold, 88):
+                sig_a, sig_b = info[a]["dhash"], info[b]["dhash"]
+                if hashing.is_video_signature(sig_a) or hashing.is_video_signature(sig_b):
+                    # Several frames averaged, so the bar can sit lower than for
+                    # a single still without inviting coincidences.
+                    score = hashing.video_compare(sig_a, sig_b)
+                    floor = max(threshold, 80)
+                else:
+                    score = hashing.dhash_similarity(sig_a, sig_b)
+                    floor = max(threshold, 88)
+                if score >= floor:
                     pairs[key] = score
 
     def _pair_score(self, a, b) -> int:

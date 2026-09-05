@@ -26,7 +26,7 @@ one affordable:
 | 3. Quick hash | MD5 of first 64 KiB + last 64 KiB + size | 128 KiB read |
 | 4. Full MD5 | Whole-file content hash of whatever survived | full read |
 | 5. Verify | **Byte-for-byte** comparison of every MD5 match | full read |
-| 6. Fuzzy | CTPH (ssdeep-style) + perceptual image hashing for *near* duplicates | 2 MiB from the middle |
+| 6. Fuzzy | CTPH (ssdeep-style), perceptual image hashing, video frame hashing | 2 MiB from the middle |
 
 Pass 5 is the "if not sure, go deeper" step. MD5 collisions are astronomically
 unlikely, but deletion is irreversible, so a match is proven rather than
@@ -43,6 +43,24 @@ threshold rather than below it. That score is blended with the size ratio and
 filename similarity, and — if Pillow is installed —
 a 64-bit perceptual hash catches re-encoded or resized photos that share no
 bytes at all.
+
+**Video that was re-encoded.** Byte-level hashing cannot see through a
+re-encode: the same film at two bitrates shares no bytes and scores 0. If
+`ffmpeg` and `ffprobe` are present, three frames are decoded at fixed fractions
+of the running time — 15%, 45%, 75% — and perceptually hashed, so two encodes
+of the same material line up regardless of size or container. The frames are
+averaged rather than taking the best one: a single matching still is a
+coincidence, three at the same points of the running time are the same film.
+Video gets this *and* CTPH, because they answer different questions — CTPH
+recognises a remux, frames recognise a re-encode, and neither sees what the
+other sees. Missing ffmpeg turns the feature off rather than failing.
+
+**The slow pass runs on every core.** The CTPH loop is pure Python, so it holds
+the GIL and threads would buy nothing; it runs in worker processes instead, one
+per core less one so the NAS stays usable. Measured on 400 candidates:
+**176 s → 75 s, 2.3×**, same groups found. Not the full core count, because the
+pairwise comparison after it is still serial. It falls back to a single core if
+the pool cannot start, and says so in the progress panel.
 
 **No abort limit.** A scan runs until it finishes. It reports live progress
 (phase, current path, bytes hashed, cache reuse), can be **stopped at any
@@ -465,8 +483,9 @@ the page triggers, not just on a failed assertion.
 The DSM package has its own test, which needs nothing but Python:
 
 ```sh
-python3 tests/test_spk.py    # builds the .spk and takes it apart again
-python3 tools/check_docs.py  # do the docs still describe this repository?
+python3 tests/test_spk.py             # builds the .spk and takes it apart again
+python3 tests/test_video_signature.py # frame hashing, no ffmpeg needed
+python3 tools/check_docs.py           # do the docs still describe this repository?
 ```
 
 Both run on every push. `check_docs.py` exists because the product page lives
