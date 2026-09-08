@@ -181,6 +181,13 @@
       <label class="check"><input type="checkbox" id="setProtect"> Never delete the last copy of a group</label>
       <label class="check"><input type="checkbox" id="setImages"> Perceptual image matching (needs Pillow)</label>
       <label class="check"><input type="checkbox" id="setQuick"> Quick rescan on by default</label>
+      <label>Near-duplicates: skip the byte hash below <input id="setCtphMinMB" type="number" min="0" max="1048576" step="1"> MB
+        <span class="hint">0 = no limit. On a large library this is the most
+        effective control there is. Measured on 1.77 million files: every file
+        takes 41 days on the NAS, from 10 MB up 40 hours, from 100 MB up 12.6.
+        Photos are unaffected - they go through the perceptual hash - and so are
+        exact duplicates.</span>
+      </label>
       <label>Near-duplicates: MiB read per file <input id="setFuzzyMiB" type="number" min="0" max="4096" step="1">
         <span class="hint">0 = read every file in full. Fuzzy hashing runs at a few MiB/s, so this is what decides whether a scan over large files finishes in minutes or hours. Exact duplicates are never affected.</span>
       </label>

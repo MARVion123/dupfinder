@@ -44,6 +44,24 @@ filename similarity, and — if Pillow is installed —
 a 64-bit perceptual hash catches re-encoded or resized photos that share no
 bytes at all.
 
+**The floor that decides whether it finishes.** *Settings → skip the byte hash
+below N MB*. On a large library this matters more than every other setting put
+together, because the CTPH loop is pure Python and a NAS is slow at it —
+measured on a four-core DS: 0.99 MiB/s across all of them, two seconds per
+file. Against a real 1.77-million-file library:
+
+| floor | candidates | on the NAS |
+|---|---|---|
+| off | 1,771,948 | 41 days |
+| 1 MB | 861,961 | 20 days |
+| 10 MB | 72,118 | 40 hours |
+| 100 MB | 22,454 | **12.6 hours** |
+
+Photos are unaffected — they go through the perceptual hash, not this one — and
+so are exact duplicates, which is where most reclaimable space is anyway. It is
+off by default rather than guessed at: a small library loses nothing by hashing
+everything.
+
 **Every candidate is compared, not the first few hundred.** Scoring every pair
 against every other is quadratic, so it used to be capped — and with a byte
 budget in force *every* file above the budget gets the same CTPH block size, so

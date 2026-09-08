@@ -775,6 +775,7 @@ class ScanEngine:
            possible partner within a 4x size window.
         """
         skip_exts = {str(e).lower() for e in self.config["fuzzy_skip_exts"]}
+        ctph_min = max(0, int(self.config["ctph_min_size"]))
         want_video = (bool(self.config["video_similarity"])
                       and hashing.ffmpeg_available())
         picked = []
@@ -789,6 +790,7 @@ class ScanEngine:
             # same film re-encoded, and neither sees what the other sees.
             wants_perceptual = is_image or is_video
             wants_ctph = (not is_image and ext not in skip_exts
+                          and row["size"] >= ctph_min
                           and (unlimited or row["size"] <= max_size))
             if wants_perceptual or wants_ctph:
                 picked.append((row, wants_perceptual, wants_ctph))

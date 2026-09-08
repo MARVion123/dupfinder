@@ -407,6 +407,8 @@ async function run() {
     await page.waitForSelector("#modalSettings:not(.hidden)");
     const roots = await page.locator("#setRoots").inputValue();
     step("settings load current config", roots.includes(fx.tree), `roots: ${roots}`);
+    const ctphMin = await page.locator("#setCtphMinMB").inputValue();
+    step("byte-hash floor defaults to off", ctphMin === "0", `${ctphMin} MB`);
     const fuzzyMiB = await page.locator("#setFuzzyMiB").inputValue();
     // 2 MiB is the default since the fuzzy window moved to the middle of the
     // file: half the bytes of the old 4 MiB prefix, and a better score on a
@@ -416,11 +418,14 @@ async function run() {
     // Change it before saving: a field that only ever round-trips its default
     // would pass even if the save path dropped it entirely.
     await page.locator("#setFuzzyMiB").fill("32");
+    await page.locator("#setCtphMinMB").fill("100");
     await page.click("#btnSaveSettings");
     await page.waitForSelector("#modalSettings.hidden", { state: "attached" });
     const saved = await (await fetch(`${BASE}/api/config`)).json();
     step("settings save round-trips", saved.roots_allowlist.includes(fx.tree),
       `delete_mode=${saved.delete_mode}`);
+    step("byte-hash floor persists as bytes", saved.ctph_min_size === 104857600,
+      `${saved.ctph_min_size} bytes`);
     step("fuzzy byte budget persists as bytes", saved.fuzzy_max_bytes === 33554432,
       `${saved.fuzzy_max_bytes} bytes`);
 

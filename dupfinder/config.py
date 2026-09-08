@@ -76,6 +76,22 @@ DEFAULTS = {
     "near_duplicates": True,
     "near_threshold": 70,          # 0-100, minimum score to report a near pair
     "fuzzy_min_size": 4096,
+    # Skip the CTPH byte hash below this size. Separate from
+    # fuzzy_min_size on purpose: that one gates the whole pass, images
+    # included, and photos are a few megabytes - raising it would switch
+    # off perceptual matching along with everything else.
+    #
+    # This is the most effective control there is on a large library, and
+    # the numbers are not close. Measured on a 1.77-million-file NAS:
+    # every file (0.99 MiB/s across its four cores) takes 41 days, from
+    # 10 MB up 40 hours, from 100 MB up 12.6. Below a megabyte or two
+    # there is almost no reclaimable space to find, and exact duplicates
+    # are unaffected either way.
+    #
+    # 0 = no separate limit. Left off by default rather than guessed at:
+    # a small library loses nothing by hashing everything, and silently
+    # dropping files from a comparison is not a default worth having.
+    "ctph_min_size": 0,
     "fuzzy_max_size": 536870912,   # 512 MiB - ignored while fuzzy_max_bytes > 0
     # Bytes read per file for the fuzzy hash. The CTPH loop is pure Python and
     # runs at a couple of MiB/s, so hashing a whole film takes minutes while

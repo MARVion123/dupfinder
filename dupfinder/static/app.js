@@ -711,6 +711,7 @@
       $("setImages").checked = !!c.image_similarity;
       $("setQuick").checked = !!c.quick_rescan;
       $("setFuzzyMiB").value = Math.round((c.fuzzy_max_bytes || 0) / 1048576);
+      $("setCtphMinMB").value = Math.round((c.ctph_min_size || 0) / 1048576);
       $("setSkipExts").value = (c.fuzzy_skip_exts || []).join("\n");
       $("setExcludes").value = (c.exclude_dirs || []).join("\n");
       $("setRoots").value = (c.roots_allowlist || []).join("\n");
@@ -794,6 +795,7 @@
       image_similarity: $("setImages").checked,
       quick_rescan: $("setQuick").checked,
       fuzzy_max_bytes: Math.max(0, Number($("setFuzzyMiB").value) || 0) * 1048576,
+      ctph_min_size: Math.max(0, Number($("setCtphMinMB").value) || 0) * 1048576,
       fuzzy_skip_exts: $("setSkipExts").value.split("\n")
         .map(function (s) { return s.trim().toLowerCase(); })
         .filter(Boolean)
