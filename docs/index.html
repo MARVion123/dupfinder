@@ -474,9 +474,9 @@
           <div class="pipe-row">
             <span class="sweep"></span>
             <div class="step">06</div>
-            <div class="what">Similarity<small>CTPH fuzzy hash for content, perceptual hash for images — produces a rating rather than a yes or no</small></div>
-            <div class="bar"><i style="width:26%"></i></div>
-            <div class="cost">4 MiB</div>
+            <div class="what">Similarity<small>CTPH over a window from the <b>middle</b> of the file, perceptual hashing for images, decoded frames for video — produces a rating rather than a yes or no</small></div>
+            <div class="bar"><i style="width:14%"></i></div>
+            <div class="cost">2 MiB, centred</div>
           </div>
         </div>
         <p style="font-size:.84rem;color:var(--muted);margin:12px 0 0;max-width:var(--measure)">
@@ -496,9 +496,13 @@
           <div class="card">
             <span class="flag">Why pass 6 exists</span>
             <h3>A rating, not a claim</h3>
-            <p>The fuzzy hash scores content similarity from 0 to 100. That number
-            is blended with the size ratio and filename similarity — content
-            dominates, the rest only tips a borderline pair.</p>
+            <p>The fuzzy hash scores content similarity from 0 to 100, reading from
+            the middle rather than the start: the front of a media file is its
+            container header, which is what two unrelated recordings from one
+            camera share and what a remux rewrites. Measured against reading
+            the first 2 MiB — <strong>100% instead of 71%</strong> on a remux,
+            and 91% instead of 72% when the header length differs too. Half
+            the bytes, and above the reporting threshold rather than below it.</p>
           </div>
         </div>
       </div>
@@ -662,79 +666,93 @@
     <div class="body-indent">
       <div class="col">
         <div class="stats">
-          <div class="stat">
-            <div class="v">739<span>MiB/s</span></div>
-            <div class="k">MD5 — the exact search</div>
+          <div class="stat"><div class="v">379 <span>MiB/s</span></div>
+            <div class="k">MD5 — the exact search</div></div>
+          <div class="stat"><div class="v">2.7 <span>MiB/s</span></div>
+            <div class="k">Fuzzy hash on a desktop</div></div>
+          <div class="stat"><div class="v">0.33 <span>MiB/s</span></div>
+            <div class="k">Fuzzy hash on a NAS core</div></div>
+          <div class="stat"><div class="v">140 <span>×</span></div>
+            <div class="k">The gap MD5 leaves behind</div></div>
+        </div>
+        <p class="cap">
+          The exact search is compiled C and reads at disk speed. The similarity
+          search is a Python loop over individual bytes, and a NAS is slow at
+          exactly that. Every number below follows from those four.
+        </p>
+
+        <div class="grid two" style="margin-top:28px">
+          <div class="card">
+            <span class="flag">The one setting that decides it</span>
+            <h3>Skip the byte hash below a size</h3>
+            <p>Measured on a real library of 1.77 million files. Nothing else
+            in the settings comes close.</p>
           </div>
-          <div class="stat">
-            <div class="v">2.5<span>MiB/s</span></div>
-            <div class="k">Fuzzy hash — the similarity search</div>
-          </div>
-          <div class="stat">
-            <div class="v">≈300<span>×</span></div>
-            <div class="k">The gap between them</div>
+          <div class="card">
+            <span class="flag">Why a floor is safe</span>
+            <h3>It only touches the slow signal</h3>
+            <p>Photos keep their perceptual hash and exact duplicates keep the
+            full MD5 and the byte-for-byte proof — which is where most
+            reclaimable space is anyway. Only the byte-level similarity of
+            small files is given up.</p>
           </div>
         </div>
 
-        <p style="margin:24px 0 16px;max-width:var(--measure);color:var(--ink-2)">
-          So the similarity pass reads the beginning of a file rather than all of
-          it. Ten films, each also present in a different container — at which
-          budget does detection break?
-        </p>
-
-        <div class="tablewrap">
+        <div class="tablewrap" style="margin-top:20px">
           <table>
             <thead>
-              <tr><th>Bytes read per file</th><th class="n">Duration</th><th class="n">Pairs found</th><th class="n">Photos caught</th></tr>
+              <tr><th>Floor</th><th class="n">Files still hashed</th>
+                  <th class="n">On the NAS alone</th><th class="n">With a helper PC</th></tr>
             </thead>
             <tbody>
-              <tr><td>16 MiB</td><td class="n">77 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
-              <tr><td>4 MiB <em style="color:var(--signal);font-style:normal">— default</em></td><td class="n">30 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
-              <tr><td>2 MiB</td><td class="n">16 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
-              <tr><td>1 MiB</td><td class="n">8 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
+              <tr><td>off</td><td class="n">1,771,948</td>
+                  <td class="n bad">41 days</td><td class="n">24 h</td></tr>
+              <tr><td>1 MB</td><td class="n">861,961</td>
+                  <td class="n bad">20 days</td><td class="n">12 h</td></tr>
+              <tr><td>10 MB</td><td class="n">72,118</td>
+                  <td class="n">40 h</td><td class="n good">59 min</td></tr>
+              <tr><td>100 MB</td><td class="n">22,454</td>
+                  <td class="n good">12.6 h</td><td class="n good">18 min</td></tr>
             </tbody>
           </table>
         </div>
         <p class="cap">
-          A remux shares its payload from just past the header, so the beginning
-          is enough. The default leaves room for fatter headers; halve it and you
-          halve the time. Measured on a desktop CPU — a NAS is slower, the ratios
-          hold.
+          Half that library is under a megabyte and only 1.3% is over a hundred.
+          The floor is off by default: a small collection loses nothing by
+          hashing everything, and dropping files from a comparison is not a
+          decision to make on someone's behalf.
         </p>
 
+        <div class="grid two" style="margin-top:28px">
+          <div class="card">
+            <span class="flag">Comparing</span>
+            <h3>An index, not every pair against every other</h3>
+            <p>Two signatures can only score above zero if they share a
+            seven-character window, so an index over those windows yields
+            exactly the pairs worth scoring. On 340 signatures holding 40 real
+            matches it finds <strong>all 40</strong> while scoring 40 pairs out
+            of 57,630 — 0.1% of the work.</p>
+          </div>
+          <div class="card">
+            <span class="flag">Spreading it</span>
+            <h3>Every core, and another machine if you let it</h3>
+            <p>The byte hash runs in worker processes rather than threads,
+            because a pure-Python loop holds the interpreter lock. A desktop
+            can take the same work over the network — the 2 MiB window costs
+            0.018 s to send against 0.049 s to hash, so the wire is nowhere
+            near the limit.</p>
+          </div>
+        </div>
 
         <div class="field" style="margin-top:24px">
-          <span class="flag">From a real run, not a test folder</span>
-          <div class="field-grid">
-            <div><div class="v">1,774,244</div><div class="k">files indexed</div></div>
-            <div><div class="v">12 TB</div><div class="k">data seen</div></div>
-            <div><div class="v">625 GB</div><div class="k">actually hashed</div></div>
-            <div><div class="v">155,138</div><div class="k">reused from cache</div></div>
-            <div><div class="v">47,234</div><div class="k">groups</div></div>
-            <div><div class="v">335 GB</div><div class="k">reclaimable</div></div>
-          </div>
-          <p style="margin:16px 0 0;font-size:.88rem;color:var(--ink-2);max-width:var(--measure)">
-            A media library on a DSM 7 NAS, captured 17 hours 26 minutes in — at
-            pass six of seven, so still running. Of 12 TB only 625 GB had to be
-            read; the cheap passes had already thrown the rest away. The 47,234
-            groups were usable at that point, because exact groups are published
-            the moment they are proven.
+          <span class="flag">The promise the helper rests on</span>
+          <p style="margin:0;max-width:var(--measure)">
+            The NAS finishes every scan on its own. A helper only makes it
+            faster; work it does not return in time is computed on the NAS
+            instead, so a desktop that goes to sleep mid-scan costs time and
+            nothing else. That is why it is a switch rather than something the
+            tool turns on for you — people start a scan and go on holiday.
           </p>
-        </div>
-        <div class="grid two" style="margin-top:24px">
-          <div class="card">
-            <span class="flag">Images</span>
-            <h3>Two methods, one of them wasted</h3>
-            <p>The same photo at two JPEG qualities: the fuzzy hash scores
-            <b>0 %</b>, the perceptual hash <b>100 %</b> — at a twenty-fourth of the
-            cost. So images now go through the perceptual hash only.</p>
-          </div>
-          <div class="card">
-            <span class="flag">Cache</span>
-            <h3>The second run is cheap</h3>
-            <p>Hashes are cached on path, size and modification time. A re-scan
-            only pays for what actually changed.</p>
-          </div>
         </div>
       </div>
     </div>

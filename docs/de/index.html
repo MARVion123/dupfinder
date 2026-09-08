@@ -475,9 +475,9 @@
           <div class="pipe-row">
             <span class="sweep"></span>
             <div class="step">06</div>
-            <div class="what">Ähnlichkeit<small>CTPH-Fuzzy-Hash für Inhalte, Wahrnehmungs-Hash für Bilder — erzeugt eine Bewertung statt eines Ja/Nein</small></div>
-            <div class="bar"><i style="width:26%"></i></div>
-            <div class="cost">4 MiB</div>
+            <div class="what">Ähnlichkeit<small>CTPH über ein Fenster aus der <b>Mitte</b> der Datei, Wahrnehmungs-Hash für Bilder, dekodierte Einzelbilder für Video — erzeugt eine Bewertung statt eines Ja/Nein</small></div>
+            <div class="bar"><i style="width:14%"></i></div>
+            <div class="cost">2 MiB, mittig</div>
           </div>
         </div>
         <p style="font-size:.84rem;color:var(--muted);margin:12px 0 0;max-width:var(--measure)">
@@ -497,9 +497,13 @@
           <div class="card">
             <span class="flag">Warum Durchgang 6</span>
             <h3>Eine Bewertung, keine Behauptung</h3>
-            <p>Der Fuzzy-Hash bewertet Inhaltsähnlichkeit von 0 bis 100. Diese Zahl
-            wird mit Größenverhältnis und Namensähnlichkeit verrechnet — Inhalt
-            dominiert, der Rest kippt einen Grenzfall.</p>
+            <p>Der Fuzzy-Hash bewertet Inhaltsähnlichkeit von 0 bis 100 — gelesen aus
+            der Mitte statt vom Anfang: der Beginn einer Mediendatei ist ihr
+            Container-Kopf, also das, was zwei unabhängige Aufnahmen derselben
+            Kamera teilen und was ein Remux ändert. Gemessen gegen die ersten
+            2 MiB — <strong>100 % statt 71 %</strong> bei einem Remux, und 91 %
+            statt 72 %, wenn auch die Kopflänge abweicht. Halb so viele Bytes,
+            und über der Meldeschwelle statt darunter.</p>
           </div>
         </div>
       </div>
@@ -667,81 +671,93 @@
     <div class="body-indent">
       <div class="col">
         <div class="stats">
-          <div class="stat">
-            <div class="v">739<span>MiB/s</span></div>
-            <div class="k">MD5 — die exakte Suche</div>
+          <div class="stat"><div class="v">379 <span>MiB/s</span></div>
+            <div class="k">MD5 — die exakte Suche</div></div>
+          <div class="stat"><div class="v">2,7 <span>MiB/s</span></div>
+            <div class="k">Fuzzy-Hash auf einem PC</div></div>
+          <div class="stat"><div class="v">0,33 <span>MiB/s</span></div>
+            <div class="k">Fuzzy-Hash je NAS-Kern</div></div>
+          <div class="stat"><div class="v">140 <span>×</span></div>
+            <div class="k">Der Abstand, den MD5 lässt</div></div>
+        </div>
+        <p class="cap">
+          Die exakte Suche ist kompiliertes C und liest mit Plattengeschwindigkeit.
+          Die Ähnlichkeitssuche ist eine Python-Schleife über einzelne Bytes, und
+          genau darin ist eine NAS langsam. Alles Weitere folgt aus diesen vier Zahlen.
+        </p>
+
+        <div class="grid two" style="margin-top:28px">
+          <div class="card">
+            <span class="flag">Die eine Einstellung, die entscheidet</span>
+            <h3>Byte-Hash unterhalb einer Größe überspringen</h3>
+            <p>Gemessen an einer echten Sammlung mit 1,77 Millionen Dateien.
+            Keine andere Einstellung kommt auch nur in die Nähe.</p>
           </div>
-          <div class="stat">
-            <div class="v">2,5<span>MiB/s</span></div>
-            <div class="k">Fuzzy-Hash — die Ähnlichkeitssuche</div>
-          </div>
-          <div class="stat">
-            <div class="v">≈300<span>×</span></div>
-            <div class="k">Unterschied zwischen beiden</div>
+          <div class="card">
+            <span class="flag">Warum eine Schwelle unbedenklich ist</span>
+            <h3>Sie betrifft nur das langsame Signal</h3>
+            <p>Fotos behalten ihren Wahrnehmungs-Hash, exakte Duplikate den
+            vollen MD5 und den Byte-für-Byte-Beweis — und dort liegt ohnehin
+            der meiste rückgewinnbare Platz. Aufgegeben wird allein die
+            byteweise Ähnlichkeit kleiner Dateien.</p>
           </div>
         </div>
 
-        <p style="margin:24px 0 16px;max-width:var(--measure);color:var(--ink-2)">
-          Deshalb liest die Ähnlichkeitssuche nicht die ganze Datei, sondern nur
-          ihren Anfang. Zehn Filme, jeder zusätzlich in einem anderen Container —
-          bei welcher Grenze bricht die Erkennung?
-        </p>
-
-        <div class="tablewrap">
+        <div class="tablewrap" style="margin-top:20px">
           <table>
             <thead>
-              <tr><th>Gelesene Menge je Datei</th><th class="n">Dauer</th><th class="n">Gefundene Paare</th><th class="n">Fotos erfasst</th></tr>
+              <tr><th>Schwelle</th><th class="n">noch gehasht</th>
+                  <th class="n">NAS allein</th><th class="n">mit Helfer-PC</th></tr>
             </thead>
             <tbody>
-              <tr><td>16 MiB</td><td class="n">77 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
-              <tr><td>4 MiB <em style="color:var(--signal);font-style:normal">— Voreinstellung</em></td><td class="n">30 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
-              <tr><td>2 MiB</td><td class="n">16 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
-              <tr><td>1 MiB</td><td class="n">8 s</td><td class="n">10 / 10</td><td class="n">20 / 20</td></tr>
+              <tr><td>aus</td><td class="n">1.771.948</td>
+                  <td class="n bad">41 Tage</td><td class="n">24 h</td></tr>
+              <tr><td>1 MB</td><td class="n">861.961</td>
+                  <td class="n bad">20 Tage</td><td class="n">12 h</td></tr>
+              <tr><td>10 MB</td><td class="n">72.118</td>
+                  <td class="n">40 h</td><td class="n good">59 min</td></tr>
+              <tr><td>100 MB</td><td class="n">22.454</td>
+                  <td class="n good">12,6 h</td><td class="n good">18 min</td></tr>
             </tbody>
           </table>
         </div>
         <p class="cap">
-            Ein Remux teilt seinen Datenstrom ab kurz hinter dem Kopf — der Anfang
-            genügt also. Die Voreinstellung lässt Luft für dickere Header; wer
-            halbiert, halbiert die Laufzeit. Gemessen auf einem Desktop-Prozessor;
-            eine NAS ist langsamer, die Verhältnisse bleiben.
+          Die Hälfte dieser Sammlung liegt unter einem Megabyte, und nur 1,3 %
+          über hundert. Die Schwelle ist standardmäßig aus: eine kleine Sammlung
+          verliert nichts dadurch, alles zu hashen, und Dateien aus einem
+          Vergleich zu nehmen ist keine Entscheidung, die man für jemanden trifft.
         </p>
 
+        <div class="grid two" style="margin-top:28px">
+          <div class="card">
+            <span class="flag">Vergleichen</span>
+            <h3>Ein Index statt jeder gegen jeden</h3>
+            <p>Zwei Signaturen können nur dann über null kommen, wenn sie ein
+            Fenster von sieben Zeichen teilen. Ein Index über diese Fenster
+            liefert also genau die Paare, die eine Bewertung verdienen. An 340
+            Signaturen mit 40 echten Treffern findet er <strong>alle 40</strong>
+            und bewertet dafür 40 Paare statt 57.630 — 0,1 % der Arbeit.</p>
+          </div>
+          <div class="card">
+            <span class="flag">Verteilen</span>
+            <h3>Alle Kerne, und ein zweiter Rechner auf Wunsch</h3>
+            <p>Der Byte-Hash läuft in eigenen Prozessen statt in Threads, weil
+            eine reine Python-Schleife die Interpretersperre hält. Ein PC kann
+            dieselbe Arbeit über das Netz übernehmen — das 2-MiB-Fenster kostet
+            0,018 s Übertragung gegen 0,049 s Rechenzeit, die Leitung ist also
+            weit vom Engpass entfernt.</p>
+          </div>
+        </div>
 
         <div class="field" style="margin-top:24px">
-          <span class="flag">Aus einem echten Lauf, nicht aus einem Testordner</span>
-          <div class="field-grid">
-            <div><div class="v">1.774.244</div><div class="k">Dateien indiziert</div></div>
-            <div><div class="v">12 TB</div><div class="k">gesehene Daten</div></div>
-            <div><div class="v">625 GB</div><div class="k">tatsächlich gehasht</div></div>
-            <div><div class="v">155.138</div><div class="k">aus dem Cache</div></div>
-            <div><div class="v">47.234</div><div class="k">Gruppen</div></div>
-            <div><div class="v">335 GB</div><div class="k">freigebbar</div></div>
-          </div>
-          <p style="margin:16px 0 0;font-size:.88rem;color:var(--ink-2);max-width:var(--measure)">
-            Eine Mediensammlung auf einer DSM-7-NAS, aufgenommen nach 17 Stunden
-            26 Minuten — im sechsten von sieben Durchgängen, also noch laufend.
-            Von 12 TB mussten nur 625 GB gelesen werden; den Rest hatten die
-            billigen Durchgänge davor schon ausgesiebt. Die 47.234 Gruppen waren
-            zu diesem Zeitpunkt bereits benutzbar, weil exakte Treffer
-            veröffentlicht werden, sobald sie bewiesen sind.
+          <span class="flag">Das Versprechen, auf dem der Helfer ruht</span>
+          <p style="margin:0;max-width:var(--measure)">
+            Die NAS wird mit jedem Suchlauf allein fertig. Ein Helfer macht ihn
+            nur schneller; was er nicht rechtzeitig zurückgibt, rechnet die NAS
+            selbst. Ein PC, der mitten im Lauf einschläft, kostet also Zeit und
+            sonst nichts. Deshalb ist es ein Schalter und nichts, was sich von
+            selbst einschaltet — Leute starten einen Suchlauf und fahren in Urlaub.
           </p>
-        </div>
-        <div class="grid two" style="margin-top:24px">
-          <div class="card">
-            <span class="flag">Bilder</span>
-            <h3>Zwei Verfahren, eines davon umsonst</h3>
-            <p>Dasselbe Foto in zwei Qualitätsstufen: der Fuzzy-Hash erkennt
-            <b>0 %</b>, der Wahrnehmungs-Hash <b>100 %</b> — und kostet dabei ein
-            Vierundzwanzigstel. Bilder gehen deshalb nur noch durch den
-            Wahrnehmungs-Hash.</p>
-          </div>
-          <div class="card">
-            <span class="flag">Zwischenspeicher</span>
-            <h3>Der zweite Lauf ist billig</h3>
-            <p>Hashes werden nach Pfad, Größe und Änderungszeit gespeichert. Ein
-            erneuter Scan bezahlt nur, was sich tatsächlich geändert hat.</p>
-          </div>
         </div>
       </div>
     </div>
