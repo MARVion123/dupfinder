@@ -124,6 +124,7 @@
         stat("Hashed", fmtBytes(scan.bytes_hashed)) +
         stat("Reused from cache", fmtNum(scan.cache_hits)) +
         stat("Groups so far", fmtNum(scan.groups_found)) +
+        helperStat(scan.helpers) +
         (scan.note ? '<span class="note">' + esc(scan.note) + "</span>" : "");
     } else {
       panel.classList.add("hidden");
@@ -160,6 +161,23 @@
       }, 3000);
     }
     if (!running && state.__tick) { clearInterval(state.__tick); state.__tick = null; }
+  }
+
+  // What another machine is contributing, and whether it is still believed.
+  // Silent until a helper actually shows up, so a scan that runs here alone
+  // does not carry a row of zeroes explaining a feature nobody switched on.
+  function helperStat(h) {
+    if (!h || !h.enabled) return "";
+    if (!h.trusted) {
+      return '<span class="note warn">A helper returned wrong signatures. ' +
+             'Its answers were discarded and the rest of this scan runs here.</span>';
+    }
+    if (!h.helpers && !h.done_by_helpers) return "";
+    var done = h.done_by_helpers || 0, back = h.taken_back || 0;
+    var share = (done + back) ? Math.round(done * 100 / (done + back)) : 0;
+    return stat("Helper machines", fmtNum(h.helpers)) +
+           stat("Hashed by helper", fmtNum(done) + " (" + share + "%)") +
+           (back ? stat("Taken back", fmtNum(back)) : "");
   }
 
   function stat(label, value) {

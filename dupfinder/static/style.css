@@ -328,3 +328,7 @@ tr.folder-pair.kin td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
    not start, a pool that broke. Quiet, because it is information rather than a
    problem the user has to act on. */
 #progStats .note { flex-basis: 100%; opacity: .7; font-size: 12px; }
+
+/* A helper that was caught returning wrong signatures. Louder than a note,
+   because the scan carried on without it and the reason must not be missed. */
+#progStats .note.warn { color: var(--danger); opacity: 1; font-weight: 600; }

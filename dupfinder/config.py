@@ -135,6 +135,14 @@ DEFAULTS = {
     "helpers_enabled": False,
     # Seconds a helper may hold a job before the NAS does it anyway.
     "helper_timeout": 60,
+    # A helper is a machine we did not write and cannot inspect. Before its
+    # results are trusted, a handful of them are recomputed here and compared;
+    # after that a small sample of every batch is. The realistic failure is a
+    # helper on a different code version, which is wrong on every file, so a
+    # handful is plenty - and 2% afterwards costs almost nothing while turning
+    # "we trust it" into "we checked".
+    "helper_verify_first": 8,
+    "helper_verify_fraction": 0.02,
     "image_similarity": True,      # perceptual hash for images (needs Pillow)
     # Perceptual hash of a few video frames, taken at fractions of the
     # running time so two encodes of the same material line up. Needs

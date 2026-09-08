@@ -19,6 +19,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import random
 import re
 import sys
 import threading
@@ -198,6 +199,11 @@ class ScanEngine:
         # decided per chunk by the helpers_enabled setting, so the switch takes
         # effect without restarting anything.
         self.helpers = HelperPool(timeout=float(config["helper_timeout"]))
+        # Per-scan trust in whatever machine is helping. A helper has not
+        # proved itself until some of its answers have been recomputed here
+        # and matched; once it is caught out it is not asked again this scan.
+        self._helper_trusted = True
+        self._helper_proved = False
         self._status = {
             "state": "idle",
             "scan_id": None,
@@ -236,6 +242,14 @@ class ScanEngine:
         )
         todo, done = st.get("todo") or 0, st.get("done") or 0
         st["phase_progress"] = round(done * 100.0 / todo, 1) if todo else None
+        # What another machine actually contributed. These numbers existed
+        # only to size the next offer, which meant the one question a helper
+        # raises - is it doing anything, and is it being believed - had no
+        # answer anywhere.
+        helpers = self.helpers.stats()
+        helpers["trusted"] = self._helper_trusted
+        helpers["enabled"] = bool(self.config["helpers_enabled"])
+        st["helpers"] = helpers
         return st
 
     def start(self, root: str, options: dict | None = None) -> int:
@@ -264,6 +278,8 @@ class ScanEngine:
         scan_id = cur.lastrowid
 
         self._cancel.clear()
+        self._helper_trusted = True
+        self._helper_proved = False
         with self._lock:
             self._status.update(
                 state="running", scan_id=scan_id, root=root, phase="walk",
@@ -344,7 +360,8 @@ class ScanEngine:
         results: list = [None] * len(jobs)
         mine = list(range(len(jobs)))
 
-        helpers = self.helpers if self.config["helpers_enabled"] else None
+        helpers = (self.helpers if self.config["helpers_enabled"]
+                   and self._helper_trusted else None)
         if helpers is not None and helpers.active():
             # Only the byte hash travels. A job that also needs a perceptual
             # hash stays here: images are fast compiled code, and video frames
@@ -359,9 +376,10 @@ class ScanEngine:
                     for i in offerable])
                 by_id = dict(zip(ids, offerable))
                 got = helpers.collect(ids, time.time() + helpers.timeout)
-                for job_id, signature in got.items():
-                    index = by_id[job_id]
-                    results[index] = (signature, None)
+                returned = {by_id[job_id]: sig for job_id, sig in got.items()}
+                checked = self._check_helper(pool, jobs, returned)
+                for index, value in checked.items():
+                    results[index] = value
                 mine = [i for i in mine if results[i] is None]
 
         if mine:
@@ -370,6 +388,55 @@ class ScanEngine:
             for index, value in zip(mine, computed):
                 results[index] = value
         return results
+
+    def _check_helper(self, pool, jobs, returned):
+        """Recompute some of a helper's answers here, and compare.
+
+        A helper is a machine we did not write and cannot inspect, and nothing
+        else in this pass would ever notice a wrong answer: the scan would run
+        to the end, report groups, and be quietly wrong. So a handful of its
+        answers are recomputed here before any of them are believed, and a
+        small sample of every batch after that.
+
+        The realistic failure is a helper running different code, which is
+        wrong on every file - a handful catches that with certainty, and the
+        sample afterwards costs about two percent of what was offered.
+
+        Returns the results to accept. On a mismatch that is nothing at all:
+        the whole batch is left to the caller to compute here, and no further
+        work is offered for the rest of this scan.
+        """
+        if not returned:
+            return {}
+
+        indices = sorted(returned)
+        if self._helper_proved:
+            fraction = max(0.0, float(self.config["helper_verify_fraction"]))
+            sample_size = int(len(indices) * fraction + 0.5)
+        else:
+            sample_size = max(1, int(self.config["helper_verify_first"]))
+        sample = indices if sample_size >= len(indices) else random.sample(
+            indices, sample_size)
+
+        if not sample:
+            return {i: (returned[i], None) for i in indices}
+
+        ours = dict(zip(sample, self._run_locally(pool, [jobs[i] for i in sample])))
+        bad = [i for i in sample if ours[i][0] != returned[i]]
+
+        if bad:
+            self._helper_trusted = False
+            self._log_note(
+                "a helper returned %d of %d sample signatures wrong; "
+                "its answers are discarded and the rest of this scan runs here"
+                % (len(bad), len(sample)))
+            return {}
+
+        self._helper_proved = True
+        # The sample was computed here anyway; that is the answer to keep.
+        accepted = {i: (returned[i], None) for i in indices}
+        accepted.update({i: ours[i] for i in sample})
+        return accepted
 
     def _helper_share(self, count):  # noqa: D401
         """How many of this chunk to offer.

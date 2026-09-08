@@ -53,6 +53,28 @@ def rejects(name: str, spk: str, checksum: str) -> None:
         check(name, False, "verify() accepted a broken package")
 
 
+def flip_one_byte(data: bytes) -> bytes:
+    """Flip a byte that provably damages the stream.
+
+    A fixed offset is not good enough. Whether flipping byte N of a deflate
+    stream is detectable depends on what happens to sit at byte N, and this
+    test once failed and then passed again with no change to the code being
+    tested - only to the files that went into the payload. A test that decides
+    for itself whether the input was damaged is a test that gets switched off.
+
+    So: mutate, and prove the mutation is real before handing it to verify().
+    """
+    original = gzip.decompress(data)
+    for offset in range(2000, min(len(data) - 9, 8000)):
+        candidate = data[:offset] + bytes([data[offset] ^ 0xFF]) + data[offset + 1:]
+        try:
+            if gzip.decompress(candidate) != original:
+                return candidate
+        except Exception:                               # noqa: BLE001
+            return candidate
+    raise AssertionError("no single-byte flip in range damaged the payload")
+
+
 def rewrite_payload(src: str, dst: str, mangle) -> str:
     """Copy a .spk, mangling package.tgz, and return the new checksum.
 
@@ -169,11 +191,10 @@ def main() -> int:
         print("\nverify() refuses damaged packages")
         bad = os.path.join(tmp, "bad.spk")
 
-        rewrite_payload(spk, bad, lambda d: d[:2000] + bytes([d[2000] ^ 0xFF]) + d[2001:])
+        rewrite_payload(spk, bad, flip_one_byte)
         rejects("flipped byte, checksum in INFO unchanged", bad, fields["checksum"])
 
-        digest = rewrite_payload(
-            spk, bad, lambda d: d[:2000] + bytes([d[2000] ^ 0xFF]) + d[2001:])
+        digest = rewrite_payload(spk, bad, flip_one_byte)
         rejects("flipped byte, checksum recomputed to match", bad, digest)
 
         # The original bug, reproduced exactly: a payload that does contain
