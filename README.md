@@ -93,6 +93,38 @@ Video gets this *and* CTPH, because they answer different questions — CTPH
 recognises a remux, frames recognise a re-encode, and neither sees what the
 other sees. Missing ffmpeg turns the feature off rather than failing.
 
+**Another machine can take the slow pass** — *Settings → Use another machine
+when one offers*, off by default. A desktop is about forty times faster at the
+byte hash than a NAS: measured on a four-core DS, 0.33 MiB/s per core against
+2.7 on a desktop. The 2 MiB window a helper needs costs 0.018 s over gigabit
+against 0.049 s to hash it, so the network is nowhere near the limit.
+
+On the other machine:
+
+```sh
+python3 -m dupfinder helper --server http://<nas>:8777
+```
+
+**The NAS still finishes on its own.** A helper only makes it faster; work it
+does not return within `helper_timeout` is computed on the NAS instead, and a
+helper that goes to sleep mid-scan costs time and nothing else. That is why the
+switch exists rather than the feature turning itself on: people start a scan and
+go on holiday, and a scan that quietly depended on a desktop would waste the
+week instead of the night.
+
+A helper never names a file. It asks for work and is handed the bytes the
+server chose, so it can only read what the scan was going to hash anyway — an
+endpoint taking a path and a byte range would have been less code and a
+general-purpose read primitive on every allowed volume. Only the byte hash
+travels: image hashing is fast compiled code, and video frames need ffmpeg on
+the machine holding the file.
+
+Verified end to end on one tree, scanned twice: **28 groups with a helper, 28
+without**. `tests/test_helper.py` covers the rest — that both routes produce the
+same signature, that a helper which never answers loses nothing, that a job held
+past its deadline goes back on offer, and that eight threads claiming at once
+never get the same job twice.
+
 **The slow pass runs on every core.** The CTPH loop is pure Python, so it holds
 the GIL and threads would buy nothing; it runs in worker processes instead, one
 per core less one so the NAS stays usable. Measured on 400 candidates:
@@ -523,6 +555,7 @@ The DSM package has its own test, which needs nothing but Python:
 ```sh
 python3 tests/test_spk.py             # builds the .spk and takes it apart again
 python3 tests/test_fuzzy_index.py     # the index finds what exhaustive comparison finds
+python3 tests/test_helper.py          # helper machines: same answers, no dependency
 python3 tests/test_video_signature.py # frame hashing, no ffmpeg needed
 python3 tools/check_docs.py           # do the docs still describe this repository?
 ```

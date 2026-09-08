@@ -181,6 +181,13 @@
       <label class="check"><input type="checkbox" id="setProtect"> Never delete the last copy of a group</label>
       <label class="check"><input type="checkbox" id="setImages"> Perceptual image matching (needs Pillow)</label>
       <label class="check"><input type="checkbox" id="setQuick"> Quick rescan on by default</label>
+      <label class="check"><input type="checkbox" id="setHelpers"> Use another machine when one offers
+        <span class="hint">A desktop is roughly forty times faster than a NAS at the
+        byte hash. The scan still finishes here on its own — a helper only makes it
+        quicker, and anything it fails to return in time is computed here instead, so
+        a machine that goes to sleep mid-scan costs time and nothing else. On the other
+        machine run: <code>python3 -m dupfinder helper --server http://&lt;nas&gt;:8777</code></span>
+      </label>
       <label>Near-duplicates: skip the byte hash below <input id="setCtphMinMB" type="number" min="0" max="1048576" step="1"> MB
         <span class="hint">0 = no limit. On a large library this is the most
         effective control there is. Measured on 1.77 million files: every file

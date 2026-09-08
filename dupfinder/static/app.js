@@ -710,6 +710,7 @@
       $("setProtect").checked = !!c.protect_last_copy;
       $("setImages").checked = !!c.image_similarity;
       $("setQuick").checked = !!c.quick_rescan;
+      $("setHelpers").checked = !!c.helpers_enabled;
       $("setFuzzyMiB").value = Math.round((c.fuzzy_max_bytes || 0) / 1048576);
       $("setCtphMinMB").value = Math.round((c.ctph_min_size || 0) / 1048576);
       $("setSkipExts").value = (c.fuzzy_skip_exts || []).join("\n");
@@ -794,6 +795,7 @@
       protect_last_copy: $("setProtect").checked,
       image_similarity: $("setImages").checked,
       quick_rescan: $("setQuick").checked,
+      helpers_enabled: $("setHelpers").checked,
       fuzzy_max_bytes: Math.max(0, Number($("setFuzzyMiB").value) || 0) * 1048576,
       ctph_min_size: Math.max(0, Number($("setCtphMinMB").value) || 0) * 1048576,
       fuzzy_skip_exts: $("setSkipExts").value.split("\n")

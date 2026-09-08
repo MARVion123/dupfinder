@@ -51,12 +51,16 @@ class Raw:
     these instead hands the bytes and content type straight through.
     """
 
-    __slots__ = ("body", "ctype", "headers")
+    __slots__ = ("body", "ctype", "headers", "status")
 
-    def __init__(self, body: bytes, ctype: str, headers: dict | None = None):
+    def __init__(self, body: bytes, ctype: str, headers: dict | None = None,
+                 status: int = 200):
         self.body = body
         self.ctype = ctype
         self.headers = headers or {}
+        # 204 is how the work endpoint says "nothing to do just now", which a
+        # helper polls for constantly and must not mistake for an error.
+        self.status = status
 
 
 class App:
@@ -102,6 +106,8 @@ class App:
                 return self.api_actions(query)
             if path == "/api/thumb":
                 return self.api_thumb(query)
+            if path == "/api/work/claim":
+                return self.api_work_claim(query)
             if path == "/api/database/usage":
                 return self.api_database_usage()
             if path == "/api/folders":
@@ -128,6 +134,8 @@ class App:
                 return self.actions.empty_quarantine(int(body["scan_id"]))
             if path == "/api/database/clear":
                 return self.api_database_clear(bool(body.get("keep_cache")))
+            if path == "/api/work/result":
+                return self.api_work_result(body)
         raise ApiError("No route for %s %s" % route, 404)
 
     # -- endpoints ------------------------------------------------------
@@ -140,6 +148,47 @@ class App:
             "pillow": hashing.pillow_available(),
             "roots": available_roots(self.config["roots_allowlist"]),
         }
+
+    # -- helper machines ------------------------------------------------
+    # A helper never names a file. It asks for work and is handed the bytes the
+    # server picked, so it can only ever read what the scan was going to hash
+    # anyway. An endpoint taking a path and a byte range would have been less
+    # code and a general-purpose read primitive on every allowed volume.
+    def api_work_claim(self, query):
+        pool = self.scanner.helpers
+        if not self.config["helpers_enabled"]:
+            raise ApiError("Helpers are switched off on this server", 403)
+        helper_id = (query.get("helper") or ["anonymous"])[0][:64]
+        job_id, job = pool.claim(helper_id)
+        if job_id is None:
+            return Raw(b"", "application/octet-stream", status=204)
+
+        offset, span = hashing.fuzzy_window(job["size"], job["max_bytes"])
+        try:
+            with open(job["path"], "rb") as fh:
+                fh.seek(offset)
+                data = fh.read(span)
+        except OSError:
+            # Unreadable here, so it is unreadable for everyone. Hand back an
+            # empty result rather than leaving the job outstanding.
+            pool.submit(job_id, None)
+            return Raw(b"", "application/octet-stream", status=204)
+
+        return Raw(data, "application/octet-stream", headers={
+            "X-Job-Id": job_id,
+            "X-Job-Size": str(job["size"]),
+            "X-Job-Max-Bytes": str(job["max_bytes"]),
+        })
+
+    def api_work_result(self, body):
+        if not self.config["helpers_enabled"]:
+            raise ApiError("Helpers are switched off on this server", 403)
+        job_id = str(body.get("job_id") or "")
+        signature = body.get("fuzzy")
+        if signature is not None and not isinstance(signature, str):
+            raise ApiError("fuzzy must be a string or null")
+        accepted = self.scanner.helpers.submit(job_id, signature)
+        return {"accepted": accepted}
 
     def api_database_usage(self):
         """What the database is holding, so the dialog can say it in numbers."""
@@ -589,7 +638,8 @@ def make_handler(app: App):
                 body = self._read_body() if method == "POST" else None
                 result = app.handle(method, path, query, body)
                 if isinstance(result, Raw):
-                    return self._send(200, body=result.body, ctype=result.ctype,
+                    return self._send(result.status, body=result.body,
+                                      ctype=result.ctype,
                                       extra_headers=result.headers)
                 self._send(200, result)
             except ApiError as exc:

@@ -28,6 +28,7 @@ from collections import defaultdict
 
 from . import hashing
 from .hashing import Cancelled
+from .helpers import HelperPool
 from .safety import check_allowed
 
 BATCH = 400
@@ -192,6 +193,11 @@ class ScanEngine:
         self._thread: threading.Thread | None = None
         self._cancel = threading.Event()
         self._lock = threading.Lock()
+        # Always present so the HTTP endpoints have somewhere to route a
+        # claim, even between scans. Whether anything is ever offered to it is
+        # decided per chunk by the helpers_enabled setting, so the switch takes
+        # effect without restarting anything.
+        self.helpers = HelperPool(timeout=float(config["helper_timeout"]))
         self._status = {
             "state": "idle",
             "scan_id": None,
@@ -326,9 +332,62 @@ class ScanEngine:
         return pool
 
     def _run_jobs(self, pool, jobs):
-        """Hash a batch, in the pool when there is one, in-process otherwise."""
+        """Hash a batch: partly on a helper machine if one is there, the rest here.
+
+        Whatever a helper does not return in time is computed locally before
+        this returns, so the caller cannot tell the difference except in how
+        long it took. That is the entire contract - see dupfinder.helpers.
+        """
         if not jobs:
             return []
+
+        results: list = [None] * len(jobs)
+        mine = list(range(len(jobs)))
+
+        helpers = self.helpers if self.config["helpers_enabled"] else None
+        if helpers is not None and helpers.active():
+            # Only the byte hash travels. A job that also needs a perceptual
+            # hash stays here: images are fast compiled code, and video frames
+            # need ffmpeg on the machine holding the file.
+            offerable = [i for i in mine
+                         if jobs[i][3] and not jobs[i][4]]
+            share = self._helper_share(len(offerable))
+            offerable = offerable[:share]
+            if offerable:
+                ids = helpers.offer([
+                    {"path": jobs[i][0], "size": jobs[i][1], "max_bytes": jobs[i][2]}
+                    for i in offerable])
+                by_id = dict(zip(ids, offerable))
+                got = helpers.collect(ids, time.time() + helpers.timeout)
+                for job_id, signature in got.items():
+                    index = by_id[job_id]
+                    results[index] = (signature, None)
+                mine = [i for i in mine if results[i] is None]
+
+        if mine:
+            batch = [jobs[i] for i in mine]
+            computed = self._run_locally(pool, batch)
+            for index, value in zip(mine, computed):
+                results[index] = value
+        return results
+
+    def _helper_share(self, count):  # noqa: D401
+        """How many of this chunk to offer.
+
+        Everything, once a helper has proved itself: it is dramatically faster
+        at this than the NAS, so holding work back to "share fairly" would only
+        make the scan longer. The first chunk offers half, because a helper
+        that is about to disappear should not take the whole chunk with it.
+        """
+        if self.helpers is None:
+            return 0
+        stats = self.helpers.stats()
+        if stats["done_by_helpers"] < 1:
+            return max(1, count // 2)
+        return count
+
+    def _run_locally(self, pool, jobs):
+        """Hash a batch here, in the pool when there is one."""
         if pool is None:
             return [_fuzzy_job(job) for job in jobs]
         try:
@@ -918,6 +977,7 @@ class ScanEngine:
                     updates = []
                     cached_rows = []
         finally:
+            self.helpers.withdraw()
             if pool is not None:
                 try:
                     pool.shutdown(wait=False, cancel_futures=True)

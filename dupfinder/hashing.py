@@ -191,6 +191,46 @@ def fuzzy_blocksize_for(size: int, max_bytes: int = 0) -> int:
     return blocksize
 
 
+def fuzzy_window(size: int, max_bytes: int = 0) -> tuple[int, int]:
+    """(offset, span) that fuzzy_hash reads for a file of this size.
+
+    Split out so the server can hand a helper machine exactly the bytes it
+    would have hashed itself, without either side re-deriving the arithmetic
+    and getting it subtly different. Centred, because the start of a media file
+    is its container header - see fuzzy_hash for the measurements.
+    """
+    span = size if max_bytes <= 0 else min(size, max_bytes)
+    offset = max(0, (size - span) // 2) if max_bytes > 0 else 0
+    return offset, span
+
+
+def fuzzy_hash_window(data: bytes, size: int, max_bytes: int = 0) -> str | None:
+    """The signature fuzzy_hash would produce, from the window bytes alone.
+
+    What a helper on another machine runs: it never sees the file, only the
+    window the server chose. `size` is the length of the whole file, because
+    that is what decides the block size - the helper cannot work it out from
+    the bytes it holds.
+
+    tests/test_helper.py checks this against fuzzy_hash on the same files. Two
+    implementations of one thing is a standing invitation to drift, and the
+    only defence is a test that fails when they do.
+    """
+    if size < MIN_BLOCKSIZE * SPAMSUM_LENGTH:
+        return None
+    _offset, span = fuzzy_window(size, max_bytes)
+    blocksize = MIN_BLOCKSIZE
+    while blocksize * SPAMSUM_LENGTH < span:
+        blocksize *= 2
+    stream = io.BytesIO(data)
+    for _ in range(6):
+        sig1, sig2 = _digest_stream(stream, blocksize, None, span, 0)
+        if len(sig1) >= SPAMSUM_LENGTH // 2 or blocksize <= MIN_BLOCKSIZE:
+            return "%d:%s:%s" % (blocksize, sig1, sig2)
+        blocksize = max(MIN_BLOCKSIZE, blocksize // 2)
+    return None
+
+
 def fuzzy_hash(path: str, size: int | None = None, cancel=None,
                max_bytes: int = 0) -> str | None:
     """Return "blocksize:sig1:sig2", or None if the file is too small/unreadable.
@@ -231,9 +271,7 @@ def fuzzy_hash(path: str, size: int | None = None, cancel=None,
     while blocksize * SPAMSUM_LENGTH < span:
         blocksize *= 2
 
-    # Centre the window. Files smaller than the budget are read whole, so this
-    # is 0 for them and nothing about the small-file case changes.
-    offset = max(0, (size - span) // 2) if max_bytes > 0 else 0
+    offset, _span = fuzzy_window(size, max_bytes)
 
     try:
         with open(path, "rb") as fh:

@@ -11,6 +11,7 @@ import argparse
 import os
 import sys
 import time
+import urllib.parse
 
 from . import __version__
 from .config import Config
@@ -209,6 +210,90 @@ def cmd_prune(args, config):
     return 0
 
 
+def cmd_helper(args, config):
+    """Hash windows for a NAS that asked for help.
+
+    Runs on a desktop, which is roughly forty times faster at the byte hash
+    than a NAS is. It never learns a path: it asks for work, receives bytes and
+    returns a signature. If the server goes away it keeps retrying quietly,
+    because the interesting case is a scan that runs for hours.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor
+
+    from . import hashing
+
+    base = args.server.rstrip("/")
+    headers = {}
+    if args.token:
+        headers["Authorization"] = "Bearer " + args.token
+
+    def request(path, data=None):
+        url = base + path
+        body = _json.dumps(data).encode() if data is not None else None
+        req = urllib.request.Request(url, data=body, headers=dict(headers))
+        if body is not None:
+            req.add_header("Content-Type", "application/json")
+        return urllib.request.urlopen(req, timeout=args.timeout)
+
+    def one_job():
+        """Claim, hash, return. True if there was work."""
+        try:
+            with request("/api/work/claim?helper=" + urllib.parse.quote(args.name)) as resp:
+                if resp.status == 204:
+                    return False
+                job_id = resp.headers.get("X-Job-Id")
+                size = int(resp.headers.get("X-Job-Size") or 0)
+                max_bytes = int(resp.headers.get("X-Job-Max-Bytes") or 0)
+                data = resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 403:
+                raise SystemExit(
+                    "The server is not accepting helpers. Switch on "
+                    "'Use another machine' in its settings.")
+            raise
+        if not job_id:
+            return False
+        signature = hashing.fuzzy_hash_window(data, size, max_bytes)
+        request("/api/work/result",
+                {"job_id": job_id, "fuzzy": signature}).close()
+        return True
+
+    print("helper %s -> %s" % (args.name, base))
+    print("  %d worker(s). Stop with Ctrl-C; the NAS carries on without it."
+          % args.workers)
+    done = 0
+    idle_since = None
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        try:
+            while True:
+                futures = [pool.submit(one_job) for _ in range(args.workers)]
+                worked = 0
+                for future in futures:
+                    try:
+                        worked += 1 if future.result() else 0
+                    except (urllib.error.URLError, OSError) as exc:
+                        # A NAS that reboots mid-scan, a cable pulled out. Say
+                        # it once and keep trying: giving up would strand a
+                        # scan that is still running perfectly well.
+                        if idle_since is None:
+                            print("  waiting for %s (%s)" % (base, exc))
+                            idle_since = time.time()
+                        break
+                if worked:
+                    done += worked
+                    idle_since = None
+                    sys.stdout.write("\r  %d windows hashed" % done)
+                    sys.stdout.flush()
+                else:
+                    time.sleep(args.poll)
+        except KeyboardInterrupt:
+            print("\n  stopped after %d windows" % done)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="dupfinder",
@@ -253,6 +338,22 @@ def main(argv=None):
                         "not run during a scan")
     p.add_argument("--yes", action="store_true", help="do not ask")
     p.set_defaults(func=cmd_prune)
+
+    p = sub.add_parser(
+        "helper",
+        help="lend this machine's CPU to a NAS running a scan")
+    p.add_argument("--server", required=True,
+                   help="http://<nas>:8777 - the address you open the UI at")
+    p.add_argument("--token", help="access token, if the server requires one")
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1),
+                   help="parallel requests (default: one per core less one)")
+    p.add_argument("--name", default=os.environ.get("COMPUTERNAME")
+                   or os.environ.get("HOSTNAME") or "helper",
+                   help="how this machine shows up in the scan status")
+    p.add_argument("--poll", type=float, default=2.0,
+                   help="seconds to wait when there is no work")
+    p.add_argument("--timeout", type=float, default=120.0)
+    p.set_defaults(func=cmd_helper)
 
     p = sub.add_parser("report", help="print results of a scan")
     p.add_argument("--scan", type=int)

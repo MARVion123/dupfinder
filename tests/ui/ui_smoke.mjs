@@ -419,11 +419,14 @@ async function run() {
     // would pass even if the save path dropped it entirely.
     await page.locator("#setFuzzyMiB").fill("32");
     await page.locator("#setCtphMinMB").fill("100");
+    await page.locator("#setHelpers").check();
     await page.click("#btnSaveSettings");
     await page.waitForSelector("#modalSettings.hidden", { state: "attached" });
     const saved = await (await fetch(`${BASE}/api/config`)).json();
     step("settings save round-trips", saved.roots_allowlist.includes(fx.tree),
       `delete_mode=${saved.delete_mode}`);
+    step("the helper switch round-trips", saved.helpers_enabled === true,
+      "ticked in Settings and saved");
     step("byte-hash floor persists as bytes", saved.ctph_min_size === 104857600,
       `${saved.ctph_min_size} bytes`);
     step("fuzzy byte budget persists as bytes", saved.fuzzy_max_bytes === 33554432,

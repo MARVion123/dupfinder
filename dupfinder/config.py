@@ -125,6 +125,16 @@ DEFAULTS = {
     # and not threads because the CTPH loop is pure Python and holds the
     # GIL - threads would take just as long on any number of cores.
     "fuzzy_workers": 0,
+    # Let another machine help with the byte hash. Off by default and
+    # deliberately so: a scan must never end up depending on a desktop
+    # that goes to sleep. With it on, the NAS still finishes on its own -
+    # a helper only makes it faster, and work a helper does not return
+    # within helper_timeout is computed here instead.
+    #
+    # On the other machine:  python3 -m dupfinder helper --server URL
+    "helpers_enabled": False,
+    # Seconds a helper may hold a job before the NAS does it anyway.
+    "helper_timeout": 60,
     "image_similarity": True,      # perceptual hash for images (needs Pillow)
     # Perceptual hash of a few video frames, taken at fractions of the
     # running time so two encodes of the same material line up. Needs
