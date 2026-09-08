@@ -238,6 +238,7 @@ tr.simulated td { opacity: .72; }
   background: var(--panel); border-radius: 12px; border: 1px solid var(--line);
   padding: 20px; width: min(560px, 100%); max-height: 88vh; overflow: auto;
 }
+.modal-box.roomy { width: min(680px, 100%); }
 .modal-box.wide { width: min(900px, 100%); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .crumbs {
@@ -253,14 +254,34 @@ ul.browser li { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var
 ul.browser li:last-child { border-bottom: none; }
 ul.browser li:hover { background: var(--accent-soft); }
 .scan-options { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-.scan-options label.check { display: flex; align-items: center; gap: 8px; }
 .form { display: flex; flex-direction: column; gap: 12px; }
 .form label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
-.form label.check { flex-direction: row; align-items: center; gap: 8px; }
 .form input, .form select { color: var(--ink); }
-/* Explanatory note under a field. Sits inside the <label>, which is already a
-   flex column, so it stacks below the input on its own. */
+
+/* A checkbox row is a two-column grid, not a flex row: the caption belongs
+   beside the box and any hint belongs *under* the caption. As a flex row the
+   caption and the hint were two items competing for the same width, and the
+   caption lost - "Use another machine when one offers" came out as a column
+   one word wide. */
+.form label.check,
+.scan-options label.check {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: center; column-gap: 8px; row-gap: 4px;
+}
+.form label.check > .hint,
+.scan-options label.check > .hint { grid-column: 2; }
+
+/* A unit that belongs beside its input rather than under it. */
+.form .unit { display: flex; align-items: baseline; gap: 8px; }
+.form .unit input { flex: 0 1 180px; min-width: 0; }
+
+/* Explanatory note under a field. In a plain label the flex column stacks it
+   below the input; in a checkbox label the grid rule above places it. */
 .form label .hint { font-size: 11.5px; line-height: 1.45; opacity: 0.75; }
+.form label .hint code {
+  display: inline-block; margin-top: 4px; padding: 2px 6px; border-radius: 5px;
+  background: var(--bg); font-size: 11px; word-break: break-all;
+}
 
 /* Set apart from the settings above it: everything else in this dialog is a
    preference you can change back, and this one is not. */

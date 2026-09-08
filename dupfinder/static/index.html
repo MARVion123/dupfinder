@@ -158,7 +158,7 @@
 </div>
 
 <div id="modalSettings" class="modal hidden">
-  <div class="modal-box">
+  <div class="modal-box roomy">
     <h2>Settings</h2>
     <div class="form" id="settingsForm">
       <label>Claude model <input id="setModel"></label>
@@ -182,18 +182,19 @@
       <label class="check"><input type="checkbox" id="setImages"> Perceptual image matching (needs Pillow)</label>
       <label class="check"><input type="checkbox" id="setQuick"> Quick rescan on by default</label>
       <label class="check"><input type="checkbox" id="setHelpers"> Use another machine when one offers
-        <span class="hint">A desktop is roughly forty times faster than a NAS at the
-        byte hash. The scan still finishes here on its own — a helper only makes it
-        quicker, and anything it fails to return in time is computed here instead, so
-        a machine that goes to sleep mid-scan costs time and nothing else. On the other
-        machine run: <code>python3 -m dupfinder helper --server http://&lt;nas&gt;:8777</code></span>
+        <span class="hint">A desktop is about forty times faster at the byte hash.
+        This scan still finishes here on its own — whatever a helper does not return
+        in time is computed here, so a machine that goes to sleep costs time and
+        nothing else. Run this on it:
+        <code>python3 -m dupfinder helper --server http://&lt;nas&gt;:8777</code></span>
       </label>
-      <label>Near-duplicates: skip the byte hash below <input id="setCtphMinMB" type="number" min="0" max="1048576" step="1"> MB
-        <span class="hint">0 = no limit. On a large library this is the most
-        effective control there is. Measured on 1.77 million files: every file
-        takes 41 days on the NAS, from 10 MB up 40 hours, from 100 MB up 12.6.
-        Photos are unaffected - they go through the perceptual hash - and so are
-        exact duplicates.</span>
+      <label>Near-duplicates: skip the byte hash below
+        <span class="unit"><input id="setCtphMinMB" type="number" min="0" max="1048576" step="1"> MB</span>
+        <span class="hint">0 = no limit, and on a large library this is the most
+        effective control there is. Measured on 1.77 million files: every file takes
+        41 days on the NAS, from 10 MB up 40 hours, from 100 MB up 12.6. Photos are
+        unaffected — they go through the perceptual hash — and so are exact
+        duplicates.</span>
       </label>
       <label>Near-duplicates: MiB read per file <input id="setFuzzyMiB" type="number" min="0" max="4096" step="1">
         <span class="hint">0 = read every file in full. Fuzzy hashing runs at a few MiB/s, so this is what decides whether a scan over large files finishes in minutes or hours. Exact duplicates are never affected.</span>
