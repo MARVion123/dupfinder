@@ -25,6 +25,19 @@ jobs:
       - name: The package still builds and holds together
         run: python3 tests/test_spk.py
 
+      - name: The installer refuses what it should refuse
+        run: python3 tests/test_install_spk.py
+
+      - name: The rest of the suite
+        # These ran nowhere until now, which makes a passing test file a
+        # decoration rather than a check.
+        run: |
+          set -e
+          for t in tests/test_fuzzy_index.py tests/test_video_signature.py                    tests/test_helper.py; do
+            echo "== $t"
+            python3 "$t"
+          done
+
       - name: The docs still describe this repository
         run: python3 tools/check_docs.py
 

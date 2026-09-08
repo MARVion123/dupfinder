@@ -226,10 +226,22 @@ nothing more. `install/spk/install-spk.sh` does the same job and prints what DSM
 actually says at each step:
 
 ```sh
-sudo sh install/spk/install-spk.sh install/spk/dist/dupfinder-*.spk
-sudo sh install/spk/install-spk.sh --status    # what DSM currently thinks
-sudo sh install/spk/install-spk.sh --clean     # remove leftovers, keep the database
+curl -fLO https://raw.githubusercontent.com/MARVion123/dupfinder/main/install/spk/install-spk.sh
+sudo sh install-spk.sh --latest                # fetch the newest release and install it
+sudo sh install-spk.sh --latest --force        # ... cancelling a running scan first
+sudo sh install-spk.sh dupfinder-*.spk         # a file you built yourself
+sudo sh install-spk.sh --status                # what DSM currently thinks
+sudo sh install-spk.sh --clean                 # remove leftovers, keep the database
 ```
+
+`--latest` verifies the download against the checksum published with the
+release, so a truncated transfer is reported as a truncated transfer rather
+than surfacing later as "package.tgz is corrupt", which blames the build.
+
+Without `--force` it refuses to run while a scan is in progress. Installing
+uninstalls first, and that would throw the scan away mid-pass — on a library of
+this size, days of it. `--force` cancels the scan properly, which writes its
+progress out, waits for it to actually stop, and only then installs.
 
 `--clean` matters more than it sounds. A half-failed install leaves DSM
 contradicting itself — `synopkg list` shows the package while `synopkg status`
@@ -367,6 +379,12 @@ sudo sh install/install-dsm.sh uninstall
 ```
 
 ### Keeping the NAS up to date from git
+
+This updates the **service**, not the package. The two do not update each
+other: the package runs from `/var/packages/dupfinder/target`, the service from
+its own checkout, and a `deploy.sh` that reports success can leave a package
+installation completely untouched. For the package, use `install-spk.sh
+--latest` above.
 
 `install/deploy.sh` pulls this repository on the NAS and rolls the new version
 into the running service. One-time setup over SSH as root:

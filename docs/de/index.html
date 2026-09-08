@@ -829,19 +829,27 @@
             <div class="i">A</div>
             <div>
               <h3>Als Paket — Kachel und Menüsymbol</h3>
-              <p>Bauen lässt es sich auf jedem Rechner mit Python 3, auch auf der
-              NAS selbst. Es wird nichts kompiliert.</p>
+              <p>Ein Befehl per SSH. Er holt die neueste Veröffentlichung,
+              prüft sie gegen die veröffentlichte Prüfsumme, räumt Reste halb
+              gelungener Versuche weg, installiert und startet.</p>
+              <pre>curl -fLO https://raw.githubusercontent.com/MARVion123/dupfinder/main/install/spk/install-spk.sh
+sudo sh install-spk.sh <b>--latest</b></pre>
+              <p>Solange ein Scan läuft, verweigert er die Arbeit: Installieren
+              deinstalliert zuerst, und das würde den Lauf mitten in der Phase
+              wegwerfen — bei einer großen Sammlung sind das Tage. Mit
+              <code>--force</code> wird der Scan vorher sauber abgebrochen, sodass
+              sein Stand in die Datenbank geschrieben wird.</p>
+              <p>In DSM geht es auch über <strong>Paketzentrum → Einstellungen →
+              Vertrauensebene</strong> auf <em>Beliebiger Herausgeber</em> und die
+              <code>.spk</code> unter <strong>Manuelle Installation</strong>. Das
+              Ergebnis ist dasselbe, nur sagt DSM im Fehlerfall nichts außer
+              „Installation fehlgeschlagen"; das Skript zeigt bei jedem Schritt,
+              was DSM tatsächlich gemeldet hat. Selbst bauen braucht nichts außer
+              Python 3:</p>
               <pre>git clone <b>https://github.com/MARVion123/dupfinder.git</b>
 cd dupfinder
 python3 install/spk/build_spk.py
-<span class="c"># -> install/spk/dist/dupfinder-&lt;version&gt;.spk</span></pre>
-              <p>In DSM <strong>Paketzentrum → Einstellungen → Vertrauensebene</strong>
-              auf <em>Beliebiger Herausgeber</em> stellen und die Datei unter
-              <strong>Manuelle Installation</strong> hochladen. Oder per SSH — das
-              zeigt, was DSM wirklich sagt, statt nur „Installation
-              fehlgeschlagen":</p>
-              <pre>sudo sh install/spk/install-spk.sh \
-    install/spk/dist/dupfinder-*.spk</pre>
+sudo sh install/spk/install-spk.sh install/spk/dist/dupfinder-*.spk</pre>
               <p>Danach den Zugriff freigeben:
               <strong>Systemsteuerung → Gemeinsamer Ordner → Bearbeiten →
               Berechtigungen → Systeminterner Benutzer → <code>dupfinder</code></strong>.
@@ -872,17 +880,29 @@ http://&lt;nas-ip&gt;:8777</pre>
             <div class="i">C</div>
             <div>
               <h3>Aktuell halten</h3>
-              <p>Dasselbe Skript holt Änderungen. Es lässt den Dienst in Ruhe,
-              wenn sich nichts bewegt hat, prüft die neue Kopie mit
-              <code>compileall</code>, <em>bevor</em> es irgendetwas stoppt, und
-              stellt die alte zurück, wenn die neue nicht binnen 15 Sekunden
-              antwortet.</p>
-              <pre>deploy.sh            <span class="c"># ausrollen, wenn sich etwas geändert hat</span>
+              <p>Welcher Befehl gilt, hängt davon ab, welchen der beiden Wege du
+              installiert hast — und keiner aktualisiert den anderen. Das Paket
+              läuft aus <code>/var/packages/dupfinder/target</code>, der Dienst aus
+              seiner eigenen Arbeitskopie. Ein <code>deploy.sh</code>, das Erfolg
+              meldet, kann eine Paketinstallation völlig unberührt lassen.</p>
+              <pre><span class="c"># Paket: neueste Veröffentlichung holen und installieren</span>
+sudo sh install-spk.sh --latest
+sudo sh install-spk.sh --latest --force   <span class="c"># laufenden Scan vorher abbrechen</span>
+
+<span class="c"># Dienst: den Zweig ziehen und ausrollen</span>
+deploy.sh            <span class="c"># ausrollen, wenn sich etwas geändert hat</span>
 deploy.sh --check    <span class="c"># zeigen, was passieren würde, ohne es zu tun</span>
 
-<span class="c"># oder nächtlich per Timer</span>
+<span class="c"># oder nächtlich per Timer — nur für den Dienst</span>
 systemctl enable dupfinder-deploy.timer
 systemctl start  dupfinder-deploy.timer</pre>
+              <p><code>deploy.sh</code> lässt den Dienst in Ruhe, wenn sich nichts
+              bewegt hat, prüft die neue Kopie mit <code>compileall</code>,
+              <em>bevor</em> es irgendetwas stoppt, und stellt die alte zurück, wenn
+              die neue nicht binnen 15 Sekunden antwortet.
+              <code>install-spk.sh</code> behält <code>@appdata</code> über eine
+              Neuinstallation hinweg — Datenbank, Hash-Zwischenspeicher und alle
+              bisherigen Scans überleben.</p>
             </div>
           </div>
 
@@ -905,6 +925,24 @@ systemctl start  dupfinder-deploy.timer</pre>
               <pre>python3 -m dupfinder serve --port 8777
 python3 -m dupfinder scan /pfad/zum/ordner   <span class="c"># ohne Oberfläche</span>
 python3 -m dupfinder report --top 25</pre>
+            </div>
+          </div>
+
+          <div class="step-block">
+            <div class="i">F</div>
+            <div>
+              <h3>Der Helfer läuft auf der anderen Maschine</h3>
+              <p>Alles oben passiert auf der NAS. Der optionale Helfer nicht, und
+              kein Installationsskript kann für dich hinübergreifen: er läuft auf
+              deinem Rechner, aus demselben Projektordner, und muss dort nicht
+              installiert werden.</p>
+              <pre>python3 -m dupfinder helper --server http://&lt;nas-ip&gt;:8777</pre>
+              <p>Vorher in den Einstellungen den Schalter <em>Use another machine
+              when one offers</em> einschalten — die Oberfläche ist englisch — denn
+              ab Werk ist er aus, und ohne ihn bietet die NAS nichts an. Das Fenster darf jederzeit zu. Was der
+              Helfer nicht rechtzeitig zurückgibt, rechnet die NAS selbst; ein
+              Rechner, der mitten im Lauf einschläft, kostet Zeit und sonst
+              nichts.</p>
             </div>
           </div>
 
@@ -1017,8 +1055,10 @@ python3 -m dupfinder report --top 25</pre>
             <h3>Das gebaute Paket</h3>
             <p>An jeder Veröffentlichung hängt eine fertige <code>.spk</code>-Datei
             — damit geht es direkt zur manuellen Installation, ohne etwas zu
-            klonen. Skripte holen sich die jeweils neueste unter einer festen
-            Adresse:</p>
+            klonen. Auf der NAS holt und prüft der Installer sie für dich:</p>
+            <pre style="margin-top:10px">sudo sh install-spk.sh --latest</pre>
+            <p style="margin-top:10px">Oder die Datei selbst, unter einer festen
+            Adresse, die immer auf die neueste Veröffentlichung zeigt:</p>
             <pre style="margin-top:10px">curl -LO https://github.com/MARVion123/dupfinder/releases/latest/download/dupfinder.spk</pre>
           </div>
           <div class="card">
@@ -1043,7 +1083,8 @@ python3 -m dupfinder serve --port 8777</pre>
               Oberfläche durch und scheitert an jeder unbehandelten Ausnahme und
               jedem HTTP-Fehler, den die Seite auslöst, nicht nur an einer
               fehlgeschlagenen Prüfung.</p>
-              <pre>python3 tests/test_spk.py            <span class="c"># 24 Prüfungen, braucht nur Python</span>
+              <pre>python3 tests/test_spk.py            <span class="c"># baut ein Paket und beschädigt es</span>
+python3 tests/test_install_spk.py    <span class="c"># der Installer, gegen einen echten Server</span>
 
 cd tests/ui &amp;&amp; npm install
 npx playwright install chromium
