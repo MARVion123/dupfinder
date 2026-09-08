@@ -28,12 +28,21 @@ jobs:
       - name: The installer refuses what it should refuse
         run: python3 tests/test_install_spk.py
 
+      - name: Pillow, which two of the tests need
+        # Optional for the tool, required by the tests that exercise the
+        # perceptual and video hashes. Without it they abort on an assertion
+        # rather than skipping, which is the right behaviour for a test file
+        # and the wrong thing to discover in CI.
+        run: python3 -m pip install --quiet pillow
+
       - name: The rest of the suite
         # These ran nowhere until now, which makes a passing test file a
         # decoration rather than a check.
         run: |
           set -e
-          for t in tests/test_fuzzy_index.py tests/test_video_signature.py                    tests/test_helper.py; do
+          for t in tests/test_fuzzy_index.py \
+                   tests/test_video_signature.py \
+                   tests/test_helper.py; do
             echo "== $t"
             python3 "$t"
           done
