@@ -1274,10 +1274,17 @@ npm test                             <span class="c"># 34 Prüfungen im echten B
               überlebt auch DSM-Aktualisierungen:
             </p>
             <pre>/usr/local/bin/python3.11 -m venv /volume1/apps/venv
-/volume1/apps/venv/bin/pip install Pillow
+/volume1/apps/venv/bin/pip install Pillow anthropic
 
 <span class="c"># dann in der Dienstdatei den Interpreter austauschen</span>
 ExecStart=<b>/volume1/apps/venv/bin/python</b> -m dupfinder serve --port 8777</pre>
+            <p>
+              Beide optionalen Pakete gehören in dieselbe Umgebung, und die
+              Paketinstallation wählt den Interpreter, der am meisten davon
+              importieren kann. Sie in ein anderes <code>python3</code> zu
+              installieren als das laufende sieht genauso aus, als hätte man es
+              richtig gemacht — bis sich nichts ändert.
+            </p>
             <p>
               Das Ausrollskript liest den Interpreter aus der Dienstdatei, ein
               solcher Wechsel muss also nirgends sonst nachgetragen werden.

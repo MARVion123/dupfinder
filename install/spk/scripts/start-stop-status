@@ -81,18 +81,36 @@ usable() {
             >/dev/null 2>&1
 }
 
+# How many of the optional packages an interpreter can import. Each one is
+# worth a point, and the highest score wins.
+#
+# This used to rank on Pillow alone, and that quietly broke the AI
+# suggestions: a venv carrying the Anthropic SDK lost to any earlier
+# interpreter that happened to have Pillow, so the SDK could be installed
+# correctly and still never be the one that ran.
+extras_score() {
+    n=0
+    if "$1" -c 'import PIL' >/dev/null 2>&1; then n=$((n + 1)); fi
+    if "$1" -c 'import anthropic' >/dev/null 2>&1; then n=$((n + 1)); fi
+    echo "${n}"
+}
+
 find_python() {
-    fallback=""
+    best=""
+    best_score=-1
     for candidate in ${CANDIDATES} "$(command -v python3 2>/dev/null)"; do
         usable "${candidate}" || continue
-        if "${candidate}" -c 'import PIL' >/dev/null 2>&1; then
-            echo "${candidate}"
-            return 0
+        score=$(extras_score "${candidate}")
+        # Strictly greater, so an earlier candidate keeps its place on a tie -
+        # the order in CANDIDATES stays the tie-breaker it always was.
+        if [ "${score}" -gt "${best_score}" ]; then
+            best="${candidate}"
+            best_score="${score}"
         fi
-        [ -z "${fallback}" ] && fallback="${candidate}"
+        if [ "${best_score}" -ge 2 ]; then break; fi
     done
-    [ -n "${fallback}" ] || return 1
-    echo "${fallback}"
+    [ -n "${best}" ] || return 1
+    echo "${best}"
     return 0
 }
 

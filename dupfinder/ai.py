@@ -17,6 +17,7 @@ import json
 import os
 import re
 import threading
+import sys
 import time
 from typing import List, Literal, Optional
 
@@ -217,8 +218,14 @@ class AIEngine:
         try:
             import anthropic  # noqa: F401
         except ImportError:
-            return {"ok": False, "reason": "The 'anthropic' package is not installed "
-                                           "(pip3 install anthropic)."}
+            # Name the interpreter that is actually running. On a NAS there are
+            # usually several, and installing into the wrong one looks exactly
+            # like installing into the right one until nothing changes.
+            return {"ok": False, "reason":
+                    "The 'anthropic' package is not installed for %s. Install it "
+                    "with: %s -m pip install anthropic"
+                    % (sys.executable or "this interpreter",
+                       sys.executable or "python3")}
         if not self.config.api_key():
             return {"ok": False, "reason": "No Anthropic API key configured. Set it in "
                                            "Settings or export ANTHROPIC_API_KEY."}

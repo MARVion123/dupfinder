@@ -499,9 +499,29 @@ read.
 ### AI suggestions
 
 ```sh
-python3 -m pip install anthropic          # provides the SDK and pydantic
+python3 -m pip install anthropic          # the official SDK, and pydantic with it
 export ANTHROPIC_API_KEY=sk-ant-...       # or paste it into Settings
 ```
+
+Declared as an extra rather than a dependency: `pip install .[ai]`, or
+`.[full]` for this and Pillow together. It stays optional on purpose. The SDK
+pulls in `pydantic-core` and `jiter`, both compiled per platform, and the
+package ships as `arch="noarch"` precisely because nothing in it has to match
+a CPU. Putting the SDK inside the payload would mean one build per
+architecture to gain a feature most scans never use.
+
+**Install it into the interpreter the package actually runs**, not whichever
+`python3` your shell finds. A NAS usually has several, and installing into the
+wrong one looks identical to installing into the right one until nothing
+changes. The package prefers the interpreter that can import the most optional
+packages and prints which one it chose at startup:
+
+```sh
+grep 'python  :' /var/packages/dupfinder/var/dupfinder.log | tail -1
+```
+
+Settings also names it: with the SDK missing, the reason line gives the exact
+path and the exact command to run.
 
 Groups are sent in batches with `claude-opus-5`, adaptive thinking, and a typed
 JSON schema, so the response is validated before it reaches the database. If a

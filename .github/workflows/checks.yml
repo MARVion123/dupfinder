@@ -28,6 +28,9 @@ jobs:
       - name: The installer refuses what it should refuse
         run: python3 tests/test_install_spk.py
 
+      - name: The package picks the interpreter that can do the most
+        run: python3 tests/test_start_stop_status.py
+
       - name: Pillow, which two of the tests need
         # Optional for the tool, required by the tests that exercise the
         # perceptual and video hashes. Without it they abort on an assertion

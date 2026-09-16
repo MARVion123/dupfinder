@@ -1249,10 +1249,17 @@ npm test                             <span class="c"># 34 checks in a real brows
               DSM updates too:
             </p>
             <pre>/usr/local/bin/python3.11 -m venv /volume1/apps/venv
-/volume1/apps/venv/bin/pip install Pillow
+/volume1/apps/venv/bin/pip install Pillow anthropic
 
 <span class="c"># then point the unit file at it</span>
 ExecStart=<b>/volume1/apps/venv/bin/python</b> -m dupfinder serve --port 8777</pre>
+            <p>
+              Both optional packages belong in the same environment, and the
+              package installation picks whichever interpreter can import the
+              most of them. Installing them into a different <code>python3</code>
+              than the one that runs looks identical to doing it right, until
+              nothing changes.
+            </p>
             <p>
               The deploy script reads the interpreter out of the unit file, so a
               switch like this needs no follow-up anywhere else.

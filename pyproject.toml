@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dupfinder"
+version = "1.0.0"
+description = "Duplicate file finder for Synology NAS"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+
+# Deliberately empty. The scanner, the web interface and the DSM package run
+# on the standard library alone, and that is the reason the .spk can be
+# arch="noarch": there is nothing in the payload that has to match a CPU.
+dependencies = []
+
+[project.optional-dependencies]
+# Perceptual image matching. Without it photos fall back to the byte hash,
+# which is both slower and worse at recognising the same picture saved twice.
+images = ["Pillow>=9"]
+
+# AI suggestions. dupfinder/ai.py talks to Claude through the official SDK
+# (anthropic.Anthropic), which is what the API's own guidance calls for; it is
+# not hand-rolled HTTP.
+#
+# Why this is an extra and not a hard dependency: anthropic pulls in pydantic,
+# whose pydantic-core is compiled per platform. Shipping it inside package.tgz
+# would turn a noarch package into one build per CPU - and the tool's whole
+# point is that a scan needs nothing but Python. So the SDK is installed
+# alongside, into whichever interpreter the package runs on, and ai.py imports
+# it lazily and says what to do when it is absent.
+ai = ["anthropic>=1,<2"]
+
+# Everything optional at once - the usual choice on a NAS that has the disk.
+full = ["Pillow>=9", "anthropic>=1,<2"]
+
+[project.scripts]
+dupfinder = "dupfinder.__main__:main"
+
+[tool.setuptools]
+packages = ["dupfinder"]
+
+[tool.setuptools.package-data]
+dupfinder = ["static/*"]
