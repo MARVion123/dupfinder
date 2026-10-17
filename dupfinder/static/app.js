@@ -17,7 +17,14 @@
     token: localStorage.getItem("dupfinder_token") || "",
     scanRunning: false,
     lastRoot: null,
-    pickPath: ""
+    pickPath: "",
+    // The two sides of a folder comparison, and what the picker is currently
+    // being opened for. Paths are chosen, never typed: on a NAS they are long
+    // enough that a text box shows a third of one, and a typo reads as "no
+    // duplicates" rather than as a mistake.
+    sideA: "",
+    sideB: "",
+    pickFor: "scan"
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -244,8 +251,7 @@
     if ($("fSuggested").checked) p.set("suggested_only", "1");
     // Both or neither: one side alone is the search box above, and sending a
     // half comparison would silently return everything.
-    var a = $("fSideA").value.trim(), b = $("fSideB").value.trim();
-    if (a && b) { p.set("a", a); p.set("b", b); }
+    if (state.sideA && state.sideB) { p.set("a", state.sideA); p.set("b", state.sideB); }
     return p.toString();
   }
 
@@ -517,7 +523,7 @@
     // The two comparison fields debounce like the search box: a path is typed
     // one character at a time, and a request per keystroke would hammer a
     // query that does a self-join over every group.
-    ["fSearch", "fSideA", "fSideB"].forEach(function (id) {
+    ["fSearch"].forEach(function (id) {
       $(id).addEventListener("input", function () {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(function () { state.offset = 0; loadGroups(); }, 350);
@@ -610,11 +616,48 @@
         }).catch(fail);
     });
 
-    $("btnPick").addEventListener("click", function () { openPicker(state.lastRoot || ""); });
+    $("btnPick").addEventListener("click", function () {
+      openPicker(state.lastRoot || "", "scan");
+    });
     $("btnStartScan").addEventListener("click", function () {
       if (!state.pickPath) { toast("Pick a folder first", true); return; }
-      startScan(state.pickPath);
+      if (state.pickFor === "scan") {
+        startScan(state.pickPath);
+      } else {
+        if (state.pickFor === "a") state.sideA = state.pickPath;
+        else state.sideB = state.pickPath;
+        renderCompareBar();
+        state.offset = 0;
+        loadGroups();
+      }
       closeModals();
+    });
+
+    $("btnCompare").addEventListener("click", function () {
+      var bar = $("compareBar");
+      // toggle() returns true when the class was ADDED, i.e. when the bar
+      // just became hidden.
+      var nowHidden = bar.classList.toggle("hidden");
+      if (nowHidden) {                     // closing it drops the comparison
+        state.sideA = state.sideB = "";
+        renderCompareBar();
+        state.offset = 0;
+        loadGroups();
+      } else {
+        renderCompareBar();
+      }
+    });
+    $("cbSideA").addEventListener("click", function () {
+      openPicker(state.sideA || state.lastRoot || "", "a");
+    });
+    $("cbSideB").addEventListener("click", function () {
+      openPicker(state.sideB || state.lastRoot || "", "b");
+    });
+    $("cbClear").addEventListener("click", function () {
+      state.sideA = state.sideB = "";
+      renderCompareBar();
+      state.offset = 0;
+      loadGroups();
     });
     $("pickList").addEventListener("click", function (ev) {
       var li = ev.target.closest("li");
@@ -716,7 +759,25 @@
   }
 
   // ---------------------------------------------------------------- picker
-  function openPicker(path) {
+  // The chosen paths, shown in full. A half-filled comparison is visibly half
+  // filled rather than silently inactive.
+  function renderCompareBar() {
+    $("cbPathA").textContent = state.sideA || "choose a folder…";
+    $("cbPathB").textContent = state.sideB || "choose a folder…";
+    $("cbSideA").classList.toggle("set", !!state.sideA);
+    $("cbSideB").classList.toggle("set", !!state.sideB);
+    $("btnCompare").classList.toggle("active",
+      !!(state.sideA && state.sideB));
+  }
+
+  function openPicker(path, purpose) {
+    if (purpose) state.pickFor = purpose;
+    var comparing = state.pickFor !== "scan";
+    $("pickTitle").textContent = comparing
+      ? "Choose folder " + state.pickFor.toUpperCase() + " to compare"
+      : "Choose a folder to scan";
+    $("pickScanOptions").classList.toggle("hidden", comparing);
+    $("btnStartScan").textContent = comparing ? "Use this folder" : "Scan this folder";
     $("modalPick").classList.remove("hidden");
     api("/api/browse?path=" + encodeURIComponent(path || "")).then(function (data) {
       state.pickPath = data.path || "";

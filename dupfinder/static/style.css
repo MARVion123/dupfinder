@@ -339,3 +339,28 @@ tr.folder-pair.kin td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .folder-depth { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px;
   align-items: center; margin: 4px 0 12px; font-size: 12.5px; color: var(--muted); }
 .folder-depth .hint { grid-column: 1 / -1; font-size: 11.5px; line-height: 1.45; opacity: .8; }
+
+/* The folder comparison. Its own row rather than a third box in the filter
+   line: those three would read as peers, and this asks a different question
+   from the search above. Paths are picked, not typed, and shown in full -
+   a NAS path does not fit in a filter-sized box, and a truncated one is
+   exactly as convincing as a correct one. */
+.comparebar { display: flex; flex-direction: column; gap: 8px; }
+.comparebar .cb-head { font-size: 13px; color: var(--ink); }
+.cb-sides { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; }
+.cb-side {
+  flex: 1 1 260px; min-width: 0; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px; border-radius: 8px; font: inherit;
+  border: 1px dashed var(--line); background: var(--bg); color: var(--muted);
+}
+.cb-side:hover { border-color: var(--accent); }
+.cb-side.set { border-style: solid; color: var(--ink); background: var(--panel); }
+.cb-cap { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; opacity: .7; }
+/* Wraps instead of truncating: the whole point is seeing which folder it is. */
+.cb-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px; line-height: 1.4; word-break: break-all; }
+.cb-arrow { align-self: center; font-size: 18px; color: var(--muted); }
+.comparebar .hint { margin: 0; font-size: 11.5px; line-height: 1.45; opacity: .75; }
+#btnCompare.active { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 640px) { .cb-arrow { display: none; } }

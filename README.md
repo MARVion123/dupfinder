@@ -154,8 +154,15 @@ type, minimum similarity, minimum file size, and a path search.
 groups come from content, and paths play no part in forming them. What the
 path search cannot express is the question people actually have: *what under A
 also exists under B*. It matches a single member; the comparison needs a group
-that reaches into both trees at once. Two fields do that, and only together -
-one side alone would silently return everything.
+that reaches into both trees at once.
+
+It lives on its own row rather than as two more boxes in the filter line —
+three path fields side by side read as peers, and this asks a different
+question from the search above. Both folders are **chosen with the same picker
+as a scan**, not typed, and shown in full: a NAS path does not fit in a
+filter-sized box, and a truncated path is exactly as convincing as a correct
+one. Both sides are needed; one alone would silently return everything, so a
+half comparison is ignored rather than half applied.
 
 The prefix is anchored with a separator, so `/volume1/photo` does not also
 match `/volume1/photos`, and it is escaped, so a folder called `100%_raw` stays

@@ -83,19 +83,35 @@
   <label class="grow">Search path
     <input id="fSearch" type="search" placeholder="e.g. /volume1/photo/2019">
   </label>
-  <!-- Two trees against each other. The search box above matches one member;
-       this asks for a group that reaches into both folders at once, which is
-       the "is my old disk already in the library" question. -->
-  <label>Compare folder
-    <input id="fSideA" type="search" placeholder="e.g. /volume1/old">
-  </label>
-  <label>…against
-    <input id="fSideB" type="search" placeholder="e.g. /volume1/photo">
-  </label>
+  <button id="btnCompare" class="ghost small" type="button"
+          title="Show only duplicates that exist in two folders at once">Compare folders…</button>
   <label class="check"><input type="checkbox" id="fSuggested"> only with suggestion</label>
   <label>Scan
     <select id="fScan"></select>
   </label>
+</section>
+
+<!-- Its own row, not a third box in the filter line. Three path fields side
+     by side claim to be peers; these two are a different question from the
+     search above, and putting them in the same row said otherwise. -->
+<section class="panel comparebar hidden" id="compareBar">
+  <div class="cb-head">Show only groups that exist in <strong>both</strong> of these folders</div>
+  <div class="cb-sides">
+    <button class="cb-side" id="cbSideA" type="button">
+      <span class="cb-cap">Folder A</span>
+      <span class="cb-path" id="cbPathA">choose a folder…</span>
+    </button>
+    <span class="cb-arrow" aria-hidden="true">↔</span>
+    <button class="cb-side" id="cbSideB" type="button">
+      <span class="cb-cap">Folder B</span>
+      <span class="cb-path" id="cbPathB">choose a folder…</span>
+    </button>
+    <button class="ghost small" id="cbClear" type="button">Clear</button>
+  </div>
+  <p class="hint">Copies that sit entirely inside one of the two are a different
+  question — those are in the normal list. Both folders are needed; one alone
+  would just show everything. <strong>Search path</strong> above still narrows
+  further.</p>
 </section>
 
 <section class="panel results">
@@ -148,10 +164,10 @@
 <!-- ---------- modals ---------- -->
 <div id="modalPick" class="modal hidden">
   <div class="modal-box">
-    <h2>Choose a folder to scan</h2>
+    <h2 id="pickTitle">Choose a folder to scan</h2>
     <div class="crumbs" id="pickPath">/</div>
     <ul class="browser" id="pickList"></ul>
-    <div class="scan-options">
+    <div class="scan-options" id="pickScanOptions">
       <label class="check"><input type="checkbox" id="optVerify" checked> Byte-for-byte verification of every match</label>
       <label class="check"><input type="checkbox" id="optNear" checked> Find near-duplicates (fuzzy + image similarity)</label>
       <label>Near-duplicate threshold <input id="optThreshold" type="number" min="40" max="99" value="70"> %</label>
