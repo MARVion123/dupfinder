@@ -492,6 +492,16 @@ class ScanEngine:
                 self._suggest(scan_id)
             self._finish(scan_id, "done")
         except Cancelled:
+            # A cancelled scan keeps its partial results, and results nobody
+            # can act on are only half kept: without this the near-duplicate
+            # groups a stopped run had already built stayed unsuggested
+            # forever, so their "select suggested deletions" checkbox did
+            # nothing and said only that there was nothing to select.
+            #
+            # Affordable only since the rule engine became two queries and a
+            # batched write; one round-trip per group would have made cancel
+            # take minutes.
+            self._suggest(scan_id)
             self._finish(scan_id, "cancelled")
         except Exception as exc:  # noqa: BLE001 - surface anything to the UI
             msg = "%s: %s" % (type(exc).__name__, exc)

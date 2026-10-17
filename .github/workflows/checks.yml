@@ -31,6 +31,9 @@ jobs:
       - name: The package picks the interpreter that can do the most
         run: python3 tests/test_start_stop_status.py
 
+      - name: The rule engine keeps the right copy, cheaply
+        run: python3 tests/test_suggestions.py
+
       - name: Pillow, which two of the tests need
         # Optional for the tool, required by the tests that exercise the
         # perceptual and video hashes. Without it they abort on an assertion

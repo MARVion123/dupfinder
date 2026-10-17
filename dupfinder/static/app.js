@@ -187,7 +187,33 @@
   function renderAiStatus(ai) {
     var running = ai.state === "running";
     $("aiProgress").classList.toggle("hidden", !running);
-    $("btnSuggest").disabled = running || state.scanRunning;
+
+    var b = $("btnSuggest");
+    // Only a suggestion run blocks this. A scan used to as well, which meant
+    // the results on screen - belonging to a finished scan - could not be
+    // acted on because some other scan happened to be busy. The button simply
+    // did nothing, and said nothing about why.
+    b.disabled = running;
+
+    // And say which of the two things a click does. Without the SDK this is
+    // the local rule engine and nothing leaves the NAS; with it, group
+    // metadata goes to Claude. The difference is big enough that the button
+    // has to name the one it means - the server has told us all along in
+    // ai.available, and nothing here ever read it.
+    var avail = ai.available || {};
+    if (running) {
+      b.textContent = "Suggestions running…";
+      b.title = "A suggestion run is already in progress.";
+    } else if (avail.ok) {
+      b.textContent = "AI suggestions";
+      b.title = "Sends group metadata - paths, sizes, timestamps, similarity - to "
+        + (avail.model || "Claude") + ". File contents are never sent.";
+    } else {
+      b.textContent = "Suggest (local rules)";
+      b.title = (avail.reason || "The Anthropic SDK is unavailable.")
+        + " Clicking fills the suggestion column using the local rule engine;"
+        + " nothing leaves the NAS.";
+    }
     if (running) {
       var pct = ai.todo ? Math.round(ai.done * 100 / ai.todo) : 0;
       $("aiBar").style.width = pct + "%";

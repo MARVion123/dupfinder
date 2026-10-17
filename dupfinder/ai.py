@@ -71,6 +71,9 @@ GOOD_DIRS = re.compile(
     r"(photo|foto|music|musik|video|documents?|dokumente|library|archive|"
     r"media|shared|projects?)", re.IGNORECASE
 )
+# How many suggestion rows go into one transaction.
+SUGGEST_CHUNK = 2000
+
 PROTECTED_DIRS = re.compile(
     r"(backup|archiv|snapshot|time.?machine|versions?|\.history)", re.IGNORECASE
 )
@@ -92,6 +95,16 @@ def score_keep(path: str, mtime: float, size: int) -> float:
     # Backup/archive copies are deliberately never *deleted* (see the verdict
     # loop), but they must not win "keep" either - promoting a backup would
     # delete the curated original and leave only the redundant copy.
+    #
+    # This comment described the rule for a long time without the code
+    # implementing it, and the result was the worst outcome this tool can
+    # produce: with the original under a path that scores badly - a download
+    # folder, say - the backup won, and the only real copy was the one offered
+    # for deletion. The penalty is larger than any other here, so a backup
+    # loses to any non-backup copy; when every copy is a backup they are all
+    # charged alike and the rest of the scoring decides.
+    if PROTECTED_DIRS.search(lower):
+        score -= 30
     score -= len(name) * 0.05
     score += min(size, 1 << 30) / (1 << 34)    # tiny nudge toward the larger copy
     score -= (time.time() - mtime) / 86400.0 * 0.01
@@ -99,23 +112,44 @@ def score_keep(path: str, mtime: float, size: int) -> float:
 
 
 def heuristic_suggestions(db, scan_id: int, group_ids=None) -> int:
-    """Write a suggestion row for every group. Returns the number written."""
+    """Write a suggestion row for every group. Returns the number written.
+
+    Two queries and a handful of batched writes, not three per group. The
+    first shape of this ran one SELECT and one committed INSERT per group,
+    which is fine for the few hundred groups a test scan produces and
+    hopeless for a real library: a run over 45,000 groups became 45,000
+    round-trips and 45,000 separate transactions, inside the HTTP request
+    that the button fires. The button looked dead for minutes.
+
+    The same lesson is already written down one file over, in cache_put_many.
+    This one never got it.
+    """
     where = "WHERE g.scan_id=?"
     params: list = [scan_id]
     if group_ids:
         where += " AND g.id IN (%s)" % ",".join("?" * len(group_ids))
         params.extend(group_ids)
     groups = db.query("SELECT g.* FROM groups g %s" % where, tuple(params))
+    if not groups:
+        return 0
 
-    written = 0
+    # Every member of every group in one pass. Ordering by group keeps the
+    # buckets contiguous, which matters only for locality - the grouping below
+    # does not depend on it.
+    members_by_group: dict = {}
+    for row in db.query(
+            """SELECT m.group_id, f.id, f.path, f.size, f.mtime, m.similarity
+               FROM group_members m
+               JOIN files f ON f.id = m.file_id
+               JOIN groups g ON g.id = m.group_id
+               %s AND f.status='present'
+               ORDER BY m.group_id""" % where, tuple(params)):
+        members_by_group.setdefault(row["group_id"], []).append(row)
+
     now = time.time()
+    pending = []
     for group in groups:
-        members = db.query(
-            """SELECT f.id, f.path, f.size, f.mtime, m.similarity
-               FROM group_members m JOIN files f ON f.id=m.file_id
-               WHERE m.group_id=? AND f.status='present'""",
-            (group["id"],),
-        )
+        members = members_by_group.get(group["id"], [])
         if len(members) < 2:
             continue
         ranked = sorted(
@@ -155,22 +189,27 @@ def heuristic_suggestions(db, scan_id: int, group_ids=None) -> int:
         else:
             merge_plan = "No merge needed - all copies are in the same folder."
 
-        db.execute(
-            """INSERT INTO suggestions(group_id,scan_id,source,keep_file_id,
-                   confidence,summary,merge_plan,verdicts,created_at)
-               VALUES(?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(group_id) DO UPDATE SET
-                   source=excluded.source, keep_file_id=excluded.keep_file_id,
-                   confidence=excluded.confidence, summary=excluded.summary,
-                   merge_plan=excluded.merge_plan, verdicts=excluded.verdicts,
-                   created_at=excluded.created_at""",
-            (group["id"], scan_id, "heuristic", keeper["id"],
-             90 if exact else 55,
-             "Keep %s" % os.path.basename(keeper["path"]),
-             merge_plan, json.dumps(verdicts), now),
-        )
-        written += 1
-    return written
+        pending.append((
+            group["id"], scan_id, "heuristic", keeper["id"],
+            90 if exact else 55,
+            "Keep %s" % os.path.basename(keeper["path"]),
+            merge_plan, json.dumps(verdicts), now,
+        ))
+
+    sql = """INSERT INTO suggestions(group_id,scan_id,source,keep_file_id,
+                 confidence,summary,merge_plan,verdicts,created_at)
+             VALUES(?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(group_id) DO UPDATE SET
+                 source=excluded.source, keep_file_id=excluded.keep_file_id,
+                 confidence=excluded.confidence, summary=excluded.summary,
+                 merge_plan=excluded.merge_plan, verdicts=excluded.verdicts,
+                 created_at=excluded.created_at"""
+    # Chunked rather than one giant statement: the verdict JSON of a very
+    # large scan would otherwise sit in memory twice, once here and once in
+    # sqlite's bound-parameter buffer.
+    for i in range(0, len(pending), SUGGEST_CHUNK):
+        db.executemany(sql, pending[i:i + SUGGEST_CHUNK])
+    return len(pending)
 
 
 # --------------------------------------------------------------------------
