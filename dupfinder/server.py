@@ -37,6 +37,41 @@ SORT_COLUMNS = {
 }
 
 
+def prefix_like(path):
+    """A LIKE pattern matching everything inside `path`.
+
+    Two details that are wrong by default. The pattern is escaped, so a folder
+    with a per-cent or underscore in its name stays a literal instead of
+    turning into a wildcard. And it is anchored with the path separator, so
+    "/volume1/photo" does not also match "/volume1/photos" - which would
+    quietly widen a comparison the user asked to narrow.
+    """
+    cleaned = path.rstrip("/\\")
+    sep = "\\" if ("\\" in cleaned and "/" not in cleaned) else "/"
+    pattern = cleaned + sep
+    for ch in ("\\", "%", "_"):
+        pattern = pattern.replace(ch, "\\" + ch)
+    return pattern + "%"
+
+
+def truncate_path(path, depth):
+    """The first `depth` components of a path, or the path if it is shorter.
+
+    The folder view compares immediate parents, which is the right grain for
+    "/a/Video" against "/a/Videos" and the wrong one for two libraries copied
+    across. At depth 2, "/volume1/old/x/y" and "/volume1/new/p/q" collapse to
+    "/volume1/old" and "/volume1/new" - one row instead of hundreds.
+    """
+    if depth <= 0:
+        return path
+    sep = "\\" if ("\\" in path and "/" not in path) else "/"
+    parts = [part for part in path.split(sep) if part]
+    if len(parts) <= depth:
+        return path
+    head = sep.join(parts[:depth])
+    return (sep + head) if path.startswith(sep) else head
+
+
 class ApiError(Exception):
     def __init__(self, message, status=400):
         super().__init__(message)
@@ -311,6 +346,26 @@ class App:
                 "EXISTS (SELECT 1 FROM group_members m JOIN files f ON f.id=m.file_id "
                 "WHERE m.group_id=g.id AND f.path LIKE ?)")
             params.append("%" + search + "%")
+        # Two trees against each other: "what under A also exists under B".
+        # The single path filter above cannot express this - it matches one
+        # member, and the question is about a pair that spans both trees. Two
+        # *distinct* members are required, so an A that is a parent of B (or
+        # the other way round) cannot satisfy both halves with one file.
+        side_a = (query.get("a") or [""])[0].strip()
+        side_b = (query.get("b") or [""])[0].strip()
+        if side_a and side_b:
+            where.append(
+                "EXISTS (SELECT 1 FROM group_members ma "
+                "JOIN files fa ON fa.id = ma.file_id "
+                "JOIN group_members mb ON mb.group_id = ma.group_id "
+                "AND mb.file_id <> ma.file_id "
+                "JOIN files fb ON fb.id = mb.file_id "
+                "WHERE ma.group_id = g.id "
+                "AND fa.status='present' AND fb.status='present' "
+                "AND fa.path LIKE ? ESCAPE '\\' "
+                "AND fb.path LIKE ? ESCAPE '\\')")
+            params.extend([prefix_like(side_a), prefix_like(side_b)])
+
         if (query.get("suggested_only") or ["0"])[0] in ("1", "true"):
             where.append("s.group_id IS NOT NULL")
 
@@ -476,6 +531,16 @@ class App:
         if scan_id is None:
             return {"pairs": [], "scan_id": None}
         limit = min(int((query.get("limit") or ["60"])[0] or 60), 300)
+        # 0 = immediate parents, as before. Any depth rolls the pairs up that
+        # many components, which is what turns "two libraries copied across"
+        # from hundreds of leaf pairs into one row.
+        try:
+            depth = max(0, int((query.get("depth") or ["0"])[0] or 0))
+        except ValueError:
+            depth = 0
+        # Rolling up after a LIMIT would aggregate a truncated sample and
+        # report numbers that are simply wrong, so the cut comes afterwards.
+        sql_limit = limit if depth == 0 else 20000
 
         rows = self.db.query(
             """SELECT
@@ -493,12 +558,37 @@ class App:
                GROUP BY a, b
                ORDER BY shared_bytes DESC
                LIMIT ?""",
-            (scan_id, limit),
+            (scan_id, sql_limit),
         )
 
         totals = {r["parent"]: r["c"] for r in self.db.query(
             "SELECT parent, COUNT(*) c FROM files WHERE scan_id=? GROUP BY parent",
             (scan_id,))}
+
+        if depth:
+            rolled = {}
+            for row in rows:
+                a = truncate_path(row["a"], depth)
+                b = truncate_path(row["b"], depth)
+                # Both sides landing on the same ancestor means the duplicates
+                # live inside one tree, which is the question the main grid
+                # already answers - not a pair of folders.
+                if a == b:
+                    continue
+                if a > b:
+                    a, b = b, a
+                acc = rolled.setdefault((a, b), {"shared_files": 0, "shared_bytes": 0})
+                acc["shared_files"] += row["shared_files"]
+                acc["shared_bytes"] += row["shared_bytes"] or 0
+            rows = [dict(a=a, b=b, **v) for (a, b), v in rolled.items()]
+            rows.sort(key=lambda r: r["shared_bytes"], reverse=True)
+            rows = rows[:limit]
+
+            folded = {}
+            for parent, count in totals.items():
+                key = truncate_path(parent, depth)
+                folded[key] = folded.get(key, 0) + count
+            totals = folded
 
         pairs = []
         for row in rows:

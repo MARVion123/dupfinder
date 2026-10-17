@@ -150,6 +150,18 @@ stare at an empty table while it works. The UI refreshes every three seconds.
 reclaimable bytes, folders spanned, suggestion confidence), with filters for
 type, minimum similarity, minimum file size, and a path search.
 
+**One tree against another.** Grouping ignores folder structure already -
+groups come from content, and paths play no part in forming them. What the
+path search cannot express is the question people actually have: *what under A
+also exists under B*. It matches a single member; the comparison needs a group
+that reaches into both trees at once. Two fields do that, and only together -
+one side alone would silently return everything.
+
+The prefix is anchored with a separator, so `/volume1/photo` does not also
+match `/volume1/photos`, and it is escaped, so a folder called `100%_raw` stays
+a literal instead of two wildcards. Both would quietly widen a comparison you
+asked to narrow, and the extra rows look exactly like real answers.
+
 **AI suggestions.** Claude reads the group metadata — never file contents — and
 proposes which single copy to keep, which are safe to delete, which need a
 human look, and what a **merge across folders** would look like. It is told to
@@ -180,6 +192,13 @@ fact, that `.../Video` and `.../Videos` are the same folder twice. The
 whose names *mean* the same thing — singular/plural, `pic`/`pictures`,
 `Bilder`/`Pics`, `backup`/`Sicherung` — above pairs that merely happen to
 overlap.
+
+Immediate parents are the right grain for `/a/Video` against `/a/Videos` and
+the wrong one for two libraries copied across: deep trees split one fact into
+hundreds of leaf pairs. A depth control rolls the pairs up, so `/old/a/b`
+against `/new/x/y` is reported once as `/old` against `/new`. Pairs that land
+on the same ancestor are dropped — duplicates inside one tree are what the main
+grid already answers.
 
 A group can never be emptied: if you select every copy, the last one is kept
 and reported as skipped. Every move and delete is logged with source,

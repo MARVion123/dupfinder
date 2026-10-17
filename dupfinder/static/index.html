@@ -83,6 +83,15 @@
   <label class="grow">Search path
     <input id="fSearch" type="search" placeholder="e.g. /volume1/photo/2019">
   </label>
+  <!-- Two trees against each other. The search box above matches one member;
+       this asks for a group that reaches into both folders at once, which is
+       the "is my old disk already in the library" question. -->
+  <label>Compare folder
+    <input id="fSideA" type="search" placeholder="e.g. /volume1/old">
+  </label>
+  <label>…against
+    <input id="fSideB" type="search" placeholder="e.g. /volume1/photo">
+  </label>
   <label class="check"><input type="checkbox" id="fSuggested"> only with suggestion</label>
   <label>Scan
     <select id="fScan"></select>
@@ -233,6 +242,17 @@
     <p class="muted">Two hundred rows saying &ldquo;this clip is in two places&rdquo; are
     often one fact: two folders are the same folder twice. Pairs whose names mean
     the same thing are listed first.</p>
+    <label class="folder-depth">Compare at
+      <select id="fFolderDepth">
+        <option value="0">the folders themselves</option>
+        <option value="2">2 levels up</option>
+        <option value="3">3 levels up</option>
+        <option value="4">4 levels up</option>
+      </select>
+      <span class="hint">Deep trees split one fact into hundreds of rows:
+      <code>/old/a/b</code> against <code>/new/x/y</code> is the same answer as
+      <code>/old</code> against <code>/new</code>. Rolling up says it once.</span>
+    </label>
     <div class="tablescroll">
       <table class="grid" id="folderGrid">
         <thead>

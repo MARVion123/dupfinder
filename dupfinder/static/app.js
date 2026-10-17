@@ -242,6 +242,10 @@
     p.set("min_size", $("fSize").value);
     if ($("fSearch").value.trim()) p.set("q", $("fSearch").value.trim());
     if ($("fSuggested").checked) p.set("suggested_only", "1");
+    // Both or neither: one side alone is the search box above, and sending a
+    // half comparison would silently return everything.
+    var a = $("fSideA").value.trim(), b = $("fSideB").value.trim();
+    if (a && b) { p.set("a", a); p.set("b", b); }
     return p.toString();
   }
 
@@ -510,10 +514,16 @@
       $(id).addEventListener("change", function () { state.offset = 0; loadGroups(); });
     });
     var searchTimer = null;
-    $("fSearch").addEventListener("input", function () {
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(function () { state.offset = 0; loadGroups(); }, 350);
+    // The two comparison fields debounce like the search box: a path is typed
+    // one character at a time, and a request per keystroke would hammer a
+    // query that does a self-join over every group.
+    ["fSearch", "fSideA", "fSideB"].forEach(function (id) {
+      $(id).addEventListener("input", function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () { state.offset = 0; loadGroups(); }, 350);
+      });
     });
+    $("fFolderDepth").addEventListener("change", openFolders);
     $("fScan").addEventListener("change", function () {
       state.scanId = Number(this.value) || null;
       state.offset = 0; state.open = {}; state.detail = {}; state.selected = {};
@@ -628,7 +638,9 @@
 
     // ---------------------------------------------------------------- folders
   function openFolders() {
-    api("/api/folders?scan_id=" + (state.scanId || "")).then(function (data) {
+    var depth = ($("fFolderDepth") || {}).value || "0";
+    api("/api/folders?scan_id=" + (state.scanId || "") + "&depth=" + depth)
+      .then(function (data) {
       var body = $("folderBody");
       body.innerHTML = "";
       if (!data.pairs || !data.pairs.length) {

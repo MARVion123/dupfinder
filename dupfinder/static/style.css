@@ -332,3 +332,10 @@ tr.folder-pair.kin td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 /* A helper that was caught returning wrong signatures. Louder than a note,
    because the scan carried on without it and the reason must not be missed. */
 #progStats .note.warn { color: var(--danger); opacity: 1; font-weight: 600; }
+
+/* The folder-depth control sits above its table, with the explanation on its
+   own line - the sentence is the point, not decoration: without it a rolled-up
+   row looks like the tool lost detail rather than answered a wider question. */
+.folder-depth { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px;
+  align-items: center; margin: 4px 0 12px; font-size: 12.5px; color: var(--muted); }
+.folder-depth .hint { grid-column: 1 / -1; font-size: 11.5px; line-height: 1.45; opacity: .8; }
