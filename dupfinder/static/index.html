@@ -203,6 +203,18 @@
           <option value="link">cross-reference</option>
         </select>
       </label>
+      <label>Which copy to keep
+        <select id="setKeepPrefers">
+          <option value="oldest">the original — the oldest copy</option>
+          <option value="newest">the latest version — the newest copy</option>
+        </select>
+        <span class="hint">Read from the date inside the file where there is
+        one — EXIF for photos, the container date for video — because that
+        survives copying. A file's own timestamp does not: <code>cp -p</code>,
+        rsync and Syno Drive carry the original across, a plain copy or a
+        download set it to now. Where no two copies differ in date, location
+        and filename decide alone.</span>
+      </label>
       <label class="check"><input type="checkbox" id="setProtect"> Never delete the last copy of a group</label>
       <label class="check"><input type="checkbox" id="setImages"> Perceptual image matching (needs Pillow)</label>
       <label class="check"><input type="checkbox" id="setQuick"> Quick rescan on by default</label>

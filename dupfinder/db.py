@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS files (
     ext       TEXT,
     size      INTEGER NOT NULL,
     mtime     REAL NOT NULL,
+    -- When the *content* was created, read from EXIF or a video container.
+    -- Survives copying, unlike mtime - see hashing.taken_at.
+    taken_at  REAL,
     dev       INTEGER,
     inode     INTEGER,
     quick     TEXT,
@@ -116,6 +119,10 @@ CREATE TABLE IF NOT EXISTS hash_cache (
     md5    TEXT,
     fuzzy  TEXT,
     dhash  TEXT,
+    -- Carried here too: without it a rescan that hits the cache would skip
+    -- reading the file and leave files.taken_at empty, so the signal would
+    -- exist only on the very first scan.
+    taken_at REAL,
     seen_at REAL NOT NULL
 );
 
@@ -167,6 +174,15 @@ class Database:
     FUZZY_REGIME = 2
 
     def _migrate(self, conn) -> None:
+        # Columns added after a database was first created. CREATE TABLE IF
+        # NOT EXISTS above does nothing to an existing table, so each addition
+        # needs its own guarded ALTER.
+        for table in ("files", "hash_cache"):
+            have = {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
+            if have and "taken_at" not in have:
+                conn.execute("ALTER TABLE %s ADD COLUMN taken_at REAL" % table)
+                conn.commit()
+
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version >= self.FUZZY_REGIME:
             return
@@ -210,33 +226,41 @@ class Database:
     # -- hash cache ----------------------------------------------------
     def cache_get(self, path: str, size: int, mtime: float):
         row = self.one(
-            "SELECT quick, md5, fuzzy, dhash FROM hash_cache "
+            "SELECT quick, md5, fuzzy, dhash, taken_at FROM hash_cache "
             "WHERE path=? AND size=? AND abs(mtime-?) < 0.001",
             (path, size, mtime),
         )
         return row
 
-    def cache_put(self, path, size, mtime, quick=None, md5=None, fuzzy=None, dhash=None):
+    def cache_put(self, path, size, mtime, quick=None, md5=None, fuzzy=None,
+                  dhash=None, taken_at=None):
         conn = self.connect()
         with self.write_lock:
             conn.execute(
-                """INSERT INTO hash_cache(path,size,mtime,quick,md5,fuzzy,dhash,seen_at)
-                   VALUES(?,?,?,?,?,?,?,?)
+                """INSERT INTO hash_cache(path,size,mtime,quick,md5,fuzzy,dhash,taken_at,seen_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(path) DO UPDATE SET
                      size=excluded.size, mtime=excluded.mtime,
                      quick=COALESCE(excluded.quick, hash_cache.quick),
                      md5=COALESCE(excluded.md5, hash_cache.md5),
                      fuzzy=COALESCE(excluded.fuzzy, hash_cache.fuzzy),
                      dhash=COALESCE(excluded.dhash, hash_cache.dhash),
+                     taken_at=COALESCE(excluded.taken_at, hash_cache.taken_at),
                      seen_at=excluded.seen_at""",
-                (path, size, mtime, quick, md5, fuzzy, dhash, time.time()),
+                (path, size, mtime, quick, md5, fuzzy, dhash, taken_at, time.time()),
             )
             conn.commit()
 
     def cache_put_many(self, rows):
         """Store many cache entries in one transaction.
 
-        rows: (path, size, mtime, quick, md5, fuzzy, dhash)
+        rows: (path, size, mtime, quick, md5, fuzzy, dhash, taken_at)
+
+        A row may stop early; the missing fields mean "nothing to say about
+        these", which is exactly what the COALESCE below does with a None.
+        Three passes write into this cache and each knows about different
+        columns - requiring all of them to spell out every field is how adding
+        taken_at broke two callers that had no opinion about it.
 
         cache_put commits once per file. On an SSD that is 16,600 files a
         second and invisible; the cost is one fsync per file, and on a NAS with
@@ -246,18 +270,28 @@ class Database:
         """
         if not rows:
             return
+        width = 8                       # up to and including taken_at
+        padded = []
+        for row in rows:
+            row = tuple(row)
+            if len(row) > width:
+                raise ValueError("cache row has %d fields, expected at most %d"
+                                 % (len(row), width))
+            padded.append(row + (None,) * (width - len(row)))
+        rows = padded
         conn = self.connect()
         now = time.time()
         with self.write_lock:
             conn.executemany(
-                """INSERT INTO hash_cache(path,size,mtime,quick,md5,fuzzy,dhash,seen_at)
-                   VALUES(?,?,?,?,?,?,?,?)
+                """INSERT INTO hash_cache(path,size,mtime,quick,md5,fuzzy,dhash,taken_at,seen_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(path) DO UPDATE SET
                      size=excluded.size, mtime=excluded.mtime,
                      quick=COALESCE(excluded.quick, hash_cache.quick),
                      md5=COALESCE(excluded.md5, hash_cache.md5),
                      fuzzy=COALESCE(excluded.fuzzy, hash_cache.fuzzy),
                      dhash=COALESCE(excluded.dhash, hash_cache.dhash),
+                     taken_at=COALESCE(excluded.taken_at, hash_cache.taken_at),
                      seen_at=excluded.seen_at""",
                 [tuple(row) + (now,) for row in rows],
             )

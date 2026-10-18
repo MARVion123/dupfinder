@@ -501,7 +501,8 @@ class App:
                 return {"engine": "ai", "groups": count, "status": self.ai.status()}
             if engine == "ai":
                 raise ApiError(avail["reason"], 409)
-        count = heuristic_suggestions(self.db, scan_id, group_ids or None)
+        count = heuristic_suggestions(self.db, scan_id, group_ids or None,
+                                      prefer=self.config["keep_prefers"])
         return {"engine": "heuristic", "groups": count,
                 "note": self.ai.availability().get("reason", "")}
 

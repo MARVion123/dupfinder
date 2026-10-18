@@ -824,6 +824,7 @@
         : "not set (or export ANTHROPIC_API_KEY)";
       $("setMaxGroups").value = c.ai_max_groups;
       $("setDelMode").value = c.delete_mode;
+      $("setKeepPrefers").value = c.keep_prefers || "oldest";
       $("setProtect").checked = !!c.protect_last_copy;
       $("setImages").checked = !!c.image_similarity;
       $("setQuick").checked = !!c.quick_rescan;
@@ -909,6 +910,7 @@
       ai_effort: $("setEffort").value,
       ai_max_groups: Number($("setMaxGroups").value) || 300,
       delete_mode: $("setDelMode").value,
+      keep_prefers: $("setKeepPrefers").value,
       protect_last_copy: $("setProtect").checked,
       image_similarity: $("setImages").checked,
       quick_rescan: $("setQuick").checked,

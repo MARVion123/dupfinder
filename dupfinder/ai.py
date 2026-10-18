@@ -79,7 +79,15 @@ PROTECTED_DIRS = re.compile(
 )
 
 
-def score_keep(path: str, mtime: float, size: int) -> float:
+# How much being the oldest (or newest) copy is worth, in the same units as
+# the path signals above. Deliberately placed between them: age overturns a
+# merely good-looking folder name, and loses to "copy (1)" in the filename
+# (-25) and to a backup path (-30). Those two say something about the file's
+# role; age only says something about the clock.
+AGE_WEIGHT = 12.0
+
+
+def score_keep(path: str, size: int) -> float:
     """Higher = better candidate to keep."""
     score = 0.0
     lower = path.lower()
@@ -107,11 +115,33 @@ def score_keep(path: str, mtime: float, size: int) -> float:
         score -= 30
     score -= len(name) * 0.05
     score += min(size, 1 << 30) / (1 << 34)    # tiny nudge toward the larger copy
-    score -= (time.time() - mtime) / 86400.0 * 0.01
+    # No time term here on purpose. It used to be `-= age_in_days * 0.01`,
+    # which did two things nobody decided: it preferred the *newer* copy, and
+    # at a hundredth of a point per day a file had to be seven years older to
+    # outweigh a single "(1)" in its name. Age is compared within the group
+    # now, where it belongs - see age_bonus.
     return score
 
 
-def heuristic_suggestions(db, scan_id: int, group_ids=None) -> int:
+def age_bonus(when: float, oldest: float, newest: float, prefer: str) -> float:
+    """Where this copy sits between the oldest and newest of its group.
+
+    Relative, not absolute. An absolute term would make every copy in an old
+    library score alike and the signal vanish, while in a young library it
+    would swamp everything else. What matters is which of *these* copies came
+    first.
+    """
+    span = newest - oldest
+    if span <= 0:
+        return 0.0                      # same instant: no evidence either way
+    position = (when - oldest) / span   # 0.0 = oldest, 1.0 = newest
+    # Only the explicit "newest" flips the direction. Anything else - an old
+    # config, a typo, a value from a future version - falls back to the
+    # documented default instead of silently reversing what the tool keeps.
+    return AGE_WEIGHT * (position if prefer == "newest" else (1.0 - position))
+
+
+def heuristic_suggestions(db, scan_id: int, group_ids=None, prefer="oldest") -> int:
     """Write a suggestion row for every group. Returns the number written.
 
     Two queries and a handful of batched writes, not three per group. The
@@ -138,7 +168,8 @@ def heuristic_suggestions(db, scan_id: int, group_ids=None) -> int:
     # does not depend on it.
     members_by_group: dict = {}
     for row in db.query(
-            """SELECT m.group_id, f.id, f.path, f.size, f.mtime, m.similarity
+            """SELECT m.group_id, f.id, f.path, f.size, f.mtime, f.taken_at,
+                      m.similarity
                FROM group_members m
                JOIN files f ON f.id = m.file_id
                JOIN groups g ON g.id = m.group_id
@@ -152,18 +183,43 @@ def heuristic_suggestions(db, scan_id: int, group_ids=None) -> int:
         members = members_by_group.get(group["id"], [])
         if len(members) < 2:
             continue
+        # When each copy came into being. taken_at is read from EXIF or a video
+        # container and survives copying; mtime is the file's own timestamp and
+        # says only when it was last written, which copy tools set as they
+        # please. So the content date wins wherever it exists.
+        when = {r["id"]: (r["taken_at"] or r["mtime"]) for r in members}
+        oldest, newest = min(when.values()), max(when.values())
         ranked = sorted(
-            members, key=lambda r: score_keep(r["path"], r["mtime"], r["size"]),
+            members,
+            key=lambda r: (score_keep(r["path"], r["size"])
+                           + age_bonus(when[r["id"]], oldest, newest, prefer)),
             reverse=True,
         )
         keeper = ranked[0]
+
+        wanted_end = newest if prefer == "newest" else oldest
+        by_age = newest > oldest and when[keeper["id"]] == wanted_end
+        dated = any(r["taken_at"] for r in members)
+        if by_age:
+            keep_reason = ("The %s copy of the group, by %s."
+                           % ("newest" if prefer == "newest" else "oldest",
+                              "the date in the file itself" if dated
+                              else "file timestamp"))
+        elif newest > oldest:
+            keep_reason = ("Best location and filename - enough to outweigh "
+                           "another copy being %s."
+                           % ("newer" if prefer == "newest" else "older"))
+        else:
+            keep_reason = ("Best location and filename; the copies carry the "
+                           "same date.")
+
         verdicts = {}
         exact = group["kind"] == "exact"
         for row in ranked:
             if row["id"] == keeper["id"]:
                 verdicts[str(row["id"])] = {
                     "action": "keep",
-                    "reason": "Best location and filename of the group.",
+                    "reason": keep_reason,
                 }
             elif not exact and row["similarity"] < 100:
                 verdicts[str(row["id"])] = {
@@ -366,7 +422,8 @@ class AIEngine:
                     with self._lock:
                         self._status["error"] = "%s: %s" % (type(exc).__name__, exc)
                     heuristic_suggestions(
-                        self.db, scan_id, [g["group_id"] for g in batch])
+                        self.db, scan_id, [g["group_id"] for g in batch],
+                        prefer=self.config["keep_prefers"])
                 with self._lock:
                     self._status["done"] += len(batch)
             state = "cancelled" if self._cancel.is_set() else "done"

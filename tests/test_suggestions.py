@@ -67,7 +67,7 @@ class Counting:
 
 
 def make_scan(db, groups, *, kind="exact", similarity=100.0):
-    """One scan. `groups` is a list of lists of (path, size, mtime)."""
+    """One scan. `groups` is a list of lists of (path, size, mtime[, taken_at])."""
     scan_id = db.execute(
         "INSERT INTO scans(root,state,started_at) VALUES(?,?,?)",
         ("/volume1/test", "done", time.time()),
@@ -80,12 +80,14 @@ def make_scan(db, groups, *, kind="exact", similarity=100.0):
             (scan_id, kind, similarity, len(members),
              sum(m[1] for m in members), 0, max(m[1] for m in members)),
         ).lastrowid
-        for path, size, mtime in members:
+        for member in members:
+            path, size, mtime = member[0], member[1], member[2]
+            taken = member[3] if len(member) > 3 else None
             fid = db.execute(
-                """INSERT INTO files(scan_id,path,parent,name,ext,size,mtime)
-                   VALUES(?,?,?,?,?,?,?)""",
+                """INSERT INTO files(scan_id,path,parent,name,ext,size,mtime,taken_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
                 (scan_id, path, os.path.dirname(path), os.path.basename(path),
-                 os.path.splitext(path)[1], size, mtime),
+                 os.path.splitext(path)[1], size, mtime, taken),
             ).lastrowid
             db.execute(
                 "INSERT INTO group_members(group_id,file_id,similarity) VALUES(?,?,?)",
@@ -167,6 +169,107 @@ def main() -> int:
         scan = make_scan(db, [[("/volume1/photo/only.jpg", 10, now)]])
         written = heuristic_suggestions(db, scan)
         check("nothing written", written == 0, str(written))
+
+        # ---- which copy is the original ----------------------------------
+        JAHR = 365 * 86400
+
+        print("\nby default it keeps the original, not the newest copy")
+        scan = make_scan(db, [[
+            ("/volume1/media/alt/clip.mp4", 5000, now - 3 * JAHR),
+            ("/volume1/media/neu/clip.mp4", 5000, now),
+        ]])
+        heuristic_suggestions(db, scan)
+        v = verdicts_of(db, scan)
+        check("the three-year-old copy is kept",
+              v.get("/volume1/media/alt/clip.mp4") == "keep", str(v))
+        check("and the fresh one is offered",
+              v.get("/volume1/media/neu/clip.mp4") == "delete", str(v))
+
+        print("\nthe date inside the file beats the file's own timestamp")
+        # The original was re-saved last week, so its mtime is the newer one.
+        # Its EXIF still says 2019, and that is what a copy cannot fake.
+        scan = make_scan(db, [[
+            ("/volume1/media/a/img.jpg", 5000, now, now - 5 * JAHR),
+            ("/volume1/media/b/img.jpg", 5000, now - 2 * JAHR, now - 2 * JAHR),
+        ]])
+        heuristic_suggestions(db, scan)
+        v = verdicts_of(db, scan)
+        check("the copy whose EXIF is oldest wins, despite a newer mtime",
+              v.get("/volume1/media/a/img.jpg") == "keep", str(v))
+
+        print("\nthe preference can be turned around")
+        scan = make_scan(db, [[
+            ("/volume1/media/alt/doc.pdf", 5000, now - 3 * JAHR),
+            ("/volume1/media/neu/doc.pdf", 5000, now),
+        ]])
+        heuristic_suggestions(db, scan, prefer="newest")
+        v = verdicts_of(db, scan)
+        check("asking for the newest keeps the newest",
+              v.get("/volume1/media/neu/doc.pdf") == "keep", str(v))
+
+        print("\nan unknown preference falls back, it does not reverse")
+        scan = make_scan(db, [[
+            ("/volume1/media/alt/x.bin", 5000, now - 3 * JAHR),
+            ("/volume1/media/neu/x.bin", 5000, now),
+        ]])
+        heuristic_suggestions(db, scan, prefer="whatever")
+        v = verdicts_of(db, scan)
+        check("garbage behaves like the default, not like newest",
+              v.get("/volume1/media/alt/x.bin") == "keep", str(v))
+
+        print("\nage is a strong signal, not an overriding one")
+        # Documented ordering: age (12) beats a merely good folder name (10)
+        # and loses to "(1)" in the filename (25) and a backup path (30).
+        scan = make_scan(db, [[
+            ("/volume1/neutral/a.jpg", 5000, now - 3 * JAHR),
+            ("/volume1/photo/a.jpg", 5000, now),
+        ]])
+        heuristic_suggestions(db, scan)
+        v = verdicts_of(db, scan)
+        check("older beats a good-looking folder",
+              v.get("/volume1/neutral/a.jpg") == "keep", str(v))
+
+        scan = make_scan(db, [[
+            ("/volume1/media/b (1).jpg", 5000, now - 3 * JAHR),
+            ("/volume1/media/b.jpg", 5000, now),
+        ]])
+        heuristic_suggestions(db, scan)
+        v = verdicts_of(db, scan)
+        check("but a copy marker still loses, however old",
+              v.get("/volume1/media/b.jpg") == "keep", str(v))
+
+        scan = make_scan(db, [[
+            ("/volume1/backup/c.jpg", 5000, now - 3 * JAHR),
+            ("/volume1/media/c.jpg", 5000, now),
+        ]])
+        heuristic_suggestions(db, scan)
+        v = verdicts_of(db, scan)
+        check("and the oldest backup never wins either",
+              v.get("/volume1/media/c.jpg") == "keep", str(v))
+
+        print("\nthe verdict says why")
+        scan = make_scan(db, [[
+            ("/volume1/media/d1.jpg", 5000, now - 3 * JAHR, now - 3 * JAHR),
+            ("/volume1/media/d2.jpg", 5000, now, now),
+        ]])
+        heuristic_suggestions(db, scan)
+        row = db.one("SELECT verdicts FROM suggestions WHERE scan_id=?", (scan,))
+        reasons = [x["reason"] for x in json.loads(row["verdicts"]).values()
+                   if x["action"] == "keep"]
+        check("the kept copy explains that it is the oldest",
+              reasons and "oldest" in reasons[0], str(reasons))
+        check("and names the date in the file as the source",
+              reasons and "in the file itself" in reasons[0], str(reasons))
+
+        print("\nidentical dates leave the decision to path and name")
+        scan = make_scan(db, [[
+            ("/volume1/downloads/e.jpg", 5000, now),
+            ("/volume1/photo/e.jpg", 5000, now),
+        ]])
+        heuristic_suggestions(db, scan)
+        v = verdicts_of(db, scan)
+        check("the better location wins when the clock says nothing",
+              v.get("/volume1/photo/e.jpg") == "keep", str(v))
 
         # ---- the cost ----------------------------------------------------
         print("\nthe work does not grow a round-trip per group")

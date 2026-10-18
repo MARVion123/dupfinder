@@ -68,17 +68,24 @@ def _fuzzy_job(job):
     Cancellation is handled by the parent between chunks.
     """
     path, size, max_bytes, need_fz, need_dh = job
-    fz = dh = None
+    fz = dh = taken = None
     if need_fz:
         try:
             fz = hashing.fuzzy_hash(path, size, None, max_bytes)
         except OSError:
             fz = None
     if need_dh:
+        # The creation time rides along here because the file is open anyway.
+        # For video, duration and creation_time come out of the single ffprobe
+        # call video_dhash needed regardless.
         ext = os.path.splitext(path)[1].lower()
-        dh = (hashing.video_dhash(path) if ext in hashing.VIDEO_EXTS
-              else hashing.image_dhash(path))
-    return fz, dh
+        if ext in hashing.VIDEO_EXTS:
+            duration, taken = hashing.video_probe(path)
+            dh = hashing.video_dhash(path, duration)
+        else:
+            dh = hashing.image_dhash(path)
+            taken = hashing.taken_at(path, ext)
+    return fz, dh, taken
 
 
 PHASES = [
@@ -434,7 +441,9 @@ class ScanEngine:
 
         self._helper_proved = True
         # The sample was computed here anyway; that is the answer to keep.
-        accepted = {i: (returned[i], None) for i in indices}
+        # Three slots like a local result: a helper only ever computes the
+        # byte hash, so the other two are empty.
+        accepted = {i: (returned[i], None, None) for i in indices}
         accepted.update({i: ours[i] for i in sample})
         return accepted
 
@@ -524,7 +533,8 @@ class ScanEngine:
         try:
             from .ai import heuristic_suggestions
 
-            heuristic_suggestions(self.db, scan_id)
+            heuristic_suggestions(self.db, scan_id,
+                                  prefer=self.config["keep_prefers"])
         except Exception:  # noqa: BLE001 - a suggestion must never fail a scan
             pass
 
@@ -998,6 +1008,7 @@ class ScanEngine:
                     cached = self.db.cache_get(row["path"], row["size"], row["mtime"])
                     fz = cached["fuzzy"] if cached else None
                     dh = cached["dhash"] if cached else None
+                    tk = cached["taken_at"] if cached else None
 
                     # A signature cached under a larger byte budget carries a
                     # larger block size and would never bucket with freshly
@@ -1014,7 +1025,7 @@ class ScanEngine:
                     if need_fz or need_dh:
                         todo.append((row, fz, dh, need_fz, need_dh))
                     else:
-                        done_now.append((row, fz, dh, None, None))
+                        done_now.append((row, fz, dh, None, None, tk))
 
                 if todo:
                     self._set(current=todo[0][0]["path"])
@@ -1024,17 +1035,18 @@ class ScanEngine:
                      for row, _fz, _dh, need_fz, need_dh in todo])
 
                 computed = []
-                for (row, fz, dh, _nf, _nd), (fresh_fz, fresh_dh) in zip(todo, results):
+                for (row, fz, dh, _nf, _nd), (fresh_fz, fresh_dh, fresh_tk) in zip(
+                        todo, results):
                     computed.append((row, fresh_fz if fresh_fz else fz,
                                      fresh_dh if fresh_dh else dh,
-                                     fresh_fz, fresh_dh))
+                                     fresh_fz, fresh_dh, fresh_tk))
 
-                for row, fz, dh, fresh_fz, fresh_dh in done_now + computed:
-                    if fresh_fz or fresh_dh:
+                for row, fz, dh, fresh_fz, fresh_dh, tk in done_now + computed:
+                    if fresh_fz or fresh_dh or tk:
                         cached_rows.append((row["path"], row["size"], row["mtime"],
-                                            None, None, fresh_fz, fresh_dh))
-                    if fz or dh:
-                        updates.append((fz, dh, row["id"]))
+                                            None, None, fresh_fz, fresh_dh, tk))
+                    if fz or dh or tk:
+                        updates.append((fz, dh, tk, row["id"]))
                     # No path: nothing downstream reads it, and it is the
                     # largest field. One of these exists per candidate for the
                     # whole pass - at 300,000 candidates the difference is
@@ -1049,7 +1061,8 @@ class ScanEngine:
                     self._bump("done")
                 if len(updates) >= BATCH:
                     self.db.executemany(
-                        "UPDATE files SET fuzzy=?, dhash=? WHERE id=?", updates)
+                        "UPDATE files SET fuzzy=?, dhash=?, "
+                        "taken_at=COALESCE(?, taken_at) WHERE id=?", updates)
                     self.db.cache_put_many(cached_rows)
                     updates = []
                     cached_rows = []
@@ -1061,7 +1074,9 @@ class ScanEngine:
                 except TypeError:
                     pool.shutdown(wait=False)   # cancel_futures is 3.9+
         if updates:
-            self.db.executemany("UPDATE files SET fuzzy=?, dhash=? WHERE id=?", updates)
+            self.db.executemany(
+                "UPDATE files SET fuzzy=?, dhash=?, "
+                "taken_at=COALESCE(?, taken_at) WHERE id=?", updates)
         self.db.cache_put_many(cached_rows)
 
         pairs = {}

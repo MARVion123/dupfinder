@@ -35,6 +35,11 @@ DEFAULT_EXCLUDES = [
     "System Volume Information",
 ]
 
+# Settings whose value comes from a fixed set.
+CHOICES = {
+    "keep_prefers": ("oldest", "newest"),
+}
+
 DEFAULTS = {
     # --- server ---
     "host": "0.0.0.0",
@@ -91,6 +96,12 @@ DEFAULTS = {
     # 0 = no separate limit. Left off by default rather than guessed at:
     # a small library loses nothing by hashing everything, and silently
     # dropping files from a comparison is not a default worth having.
+    # Which copy a suggestion keeps when the group spans different dates.
+    # "oldest" reads as "keep the original"; "newest" as "keep the latest
+    # version". Both are legitimate - a photo library wants the first, a
+    # folder of working documents the second - and the tool used to decide it
+    # silently, in favour of the newest, at a weight too small to notice.
+    "keep_prefers": "oldest",
     "ctph_min_size": 0,
     "fuzzy_max_size": 536870912,   # 512 MiB - ignored while fuzzy_max_bytes > 0
     # Bytes read per file for the fuzzy hash. The CTPH loop is pure Python and
@@ -224,6 +235,11 @@ class Config:
                 except (TypeError, ValueError):
                     continue
             elif expected is list and not isinstance(value, list):
+                continue
+            # Values that are a choice, not free text. An unknown one is
+            # dropped rather than stored: a setting nobody can spell is worse
+            # than the default it replaced.
+            if key in CHOICES and str(value) not in CHOICES[key]:
                 continue
             elif expected is str and not isinstance(value, str):
                 value = str(value)

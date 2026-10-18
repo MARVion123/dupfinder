@@ -526,20 +526,113 @@ def ffmpeg_available() -> bool:
     return bool(_FFMPEG) and pillow_available()
 
 
-def video_duration(path: str) -> float:
-    """Seconds, or 0 if ffprobe cannot say."""
+def video_probe(path: str):
+    """(duration in seconds, creation time as epoch or None).
+
+    Both out of one ffprobe call. They are wanted at the same moment and
+    starting a second process per video would cost more than the two values
+    are worth - at twenty thousand videos that is twenty thousand avoidable
+    process starts.
+    """
     if not _FFPROBE:
-        return 0.0
+        return 0.0, None
     import subprocess
 
     try:
         out = subprocess.run(
-            [_FFPROBE, "-v", "error", "-show_entries", "format=duration",
+            [_FFPROBE, "-v", "error", "-show_entries",
+             "format=duration:format_tags=creation_time",
              "-of", "default=nw=1:nk=1", path],
             capture_output=True, timeout=30, check=False)
-        return max(0.0, float(out.stdout.decode("ascii", "ignore").strip() or 0))
     except Exception:
-        return 0.0
+        return 0.0, None
+
+    duration, created = 0.0, None
+    for line in out.stdout.decode("utf-8", "ignore").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Unkeyed output, one value per line and in the order asked for:
+        # a duration parses as a float, a timestamp does not.
+        try:
+            duration = max(duration, float(line))
+        except ValueError:
+            created = created or _epoch_from_iso(line)
+    return duration, created
+
+
+def video_duration(path: str) -> float:
+    """Seconds, or 0 if ffprobe cannot say."""
+    return video_probe(path)[0]
+
+
+def _epoch_from_exif(raw):
+    """EXIF writes "2019:07:14 18:22:05" - local time, no zone. Returns epoch."""
+    import datetime
+    try:
+        return datetime.datetime.strptime(raw.strip(), "%Y:%m:%d %H:%M:%S").timestamp()
+    except Exception:
+        return None
+
+
+def _epoch_from_iso(raw):
+    """ffprobe writes "2019-07-14T18:22:05.000000Z"."""
+    import datetime
+    try:
+        text = raw.strip().replace("Z", "+00:00")
+        return datetime.datetime.fromisoformat(text).timestamp()
+    except Exception:
+        return None
+
+
+def taken_at(path: str, ext: str | None = None):
+    """When the content was created, from the content itself. None if unknown.
+
+    The point of this is that it survives copying. A file's mtime is the last
+    time the *file* changed, and copy tools disagree about it: cp -p, rsync -a
+    and Syno Drive carry the original mtime across, plain cp and a browser
+    download set it to now. So mtime answers "which file was touched last",
+    which is not the question "which of these is the original".
+
+    EXIF DateTimeOriginal and a video container's creation_time travel with
+    the bytes. A copy keeps them; a re-encode usually loses them. That makes
+    them evidence about the content rather than about the filesystem.
+    """
+    ext = (ext if ext is not None else os.path.splitext(path)[1]).lower()
+
+    if ext in VIDEO_EXTS:
+        if not _FFPROBE:
+            return None
+        import subprocess
+        try:
+            out = subprocess.run(
+                [_FFPROBE, "-v", "error", "-show_entries",
+                 "format_tags=creation_time", "-of", "default=nw=1:nk=1", path],
+                capture_output=True, timeout=30, check=False)
+            return _epoch_from_iso(out.stdout.decode("utf-8", "ignore"))
+        except Exception:
+            return None
+
+    if ext not in IMAGE_EXTS or not pillow_available():
+        return None
+    try:
+        with _PIL_IMAGE.open(path) as im:  # type: ignore[union-attr]
+            exif = im.getexif()
+    except Exception:
+        return None
+    if not exif:
+        return None
+    try:
+        sub = exif.get_ifd(_EXIF_IFD) or {}
+    except Exception:
+        sub = {}
+    for source, tag in ((sub, _EXIF_DATETIME_ORIGINAL),
+                        (sub, _EXIF_DATETIME_DIGITIZED),
+                        (exif, _TIFF_DATETIME)):
+        raw = _exif_text(source.get(tag)) if source else None
+        if raw:
+            return _epoch_from_exif(raw)
+    return None
 
 
 def video_dhash(path: str, duration: float | None = None) -> str | None:

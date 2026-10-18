@@ -37,6 +37,12 @@ jobs:
       - name: One tree compared against another
         run: python3 tests/test_compare_trees.py
 
+      - name: A real scan, start to finish
+        # The only test here that runs the whole chain. Adding a column once
+        # widened an INSERT and left two other passes writing the old row;
+        # every unit test passed and the scan died on the first file.
+        run: python3 tests/test_scan_end_to_end.py
+
       - name: Pillow, which two of the tests need
         # Optional for the tool, required by the tests that exercise the
         # perceptual and video hashes. Without it they abort on an assertion

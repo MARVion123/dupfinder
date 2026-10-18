@@ -180,6 +180,30 @@ When no API key is configured the same UI is filled by a local rule engine
 (path depth, folder quality, `copy`/`(1)`/`~` markers, age), so the app is fully
 usable offline.
 
+**Which copy counts as the original.** *Settings → Which copy to keep* decides:
+the **oldest** (default — "keep the original") or the **newest** ("keep the
+latest version"). Both are legitimate; a photo library wants the first, a
+folder of working documents the second.
+
+The date comes from inside the file wherever there is one — EXIF for photos,
+the container date for video — because that survives copying. A file's own
+mtime does not: `cp -p`, rsync and Syno Drive carry the original timestamp
+across, while a plain copy or a browser download set it to now. So mtime
+answers "which file was written last", which is not the question being asked.
+It is still used where nothing better exists.
+
+Age is compared *within* a group, never as an absolute. An absolute term makes
+every copy in an old library score alike and the signal vanish; in a young one
+it swamps everything else. The weight sits deliberately between the other
+signals: being the oldest copy outranks a merely good-looking folder name, and
+loses to `(1)` in the filename and to a backup path — those say something about
+the file's role, age only about the clock.
+
+For an **exact** duplicate the content date cannot separate the copies at all:
+identical bytes carry identical embedded dates. There the decision falls back
+to mtime, path and filename. The content date earns its keep on re-saved
+copies, which is also where the perceptual hash finds the pair.
+
 **Deletion is opt-in and reversible.** Tick individual files, or use
 *Select suggested deletions* per group / for the whole page. Three modes:
 
