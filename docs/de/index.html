@@ -506,6 +506,31 @@
             und über der Meldeschwelle statt darunter.</p>
           </div>
         </div>
+
+        <div class="field" style="margin-top:32px">
+          <span class="flag">Ein Ordner gegen einen anderen</span>
+          <p>
+            Beim Gruppieren ist die Ordnerstruktur ohnehin egal — Gruppen
+            entstehen aus dem Inhalt, Pfade spielen dabei keine Rolle. Was der
+            Pfad-Suchbegriff nicht fragen kann, ist die Frage, die man
+            tatsächlich hat: <strong>was unter A liegt auch unter B</strong>.
+            Die Suche trifft ein Mitglied; hier braucht es eine Gruppe, die in
+            beide Bäume hineinreicht. <em>Compare folders…</em> öffnet dafür
+            eine eigene Zeile, und beide Seiten werden mit demselben
+            Ordner-Wähler bestimmt wie ein Scan — ein NAS-Pfad passt in kein
+            filtergroßes Feld, und ein abgeschnittener Pfad wirkt genauso
+            überzeugend wie ein richtiger.
+          </p>
+          <p>
+            Die <strong>Ordner-Ansicht</strong> beantwortet dieselbe Frage eine
+            Ebene höher und kann die Paare um eine wählbare Zahl von Ebenen
+            zusammenfassen. Direkte Elternordner sind die richtige Körnung für
+            <code>/a/Video</code> gegen <code>/a/Videos</code> und die falsche
+            für zwei kopierte Bibliotheken: Tiefe Bäume zerlegen eine Tatsache
+            in hunderte Zeilen. Zusammengefasst steht <code>/alt</code> gegen
+            <code>/neu</code> einmal da.
+          </p>
+        </div>
       </div>
     </div>
   </div>
@@ -515,7 +540,7 @@
   <div class="wrap">
     <div class="sechead">
       <div class="num">§ 02</div>
-      <h2>Vier Vorkehrungen, bevor eine Datei verschwindet</h2>
+      <h2>Fünf Vorkehrungen, bevor eine Datei verschwindet</h2>
       <p class="sub">
         Ein Werkzeug, das auf Zuruf löscht, ist ein Werkzeug, dem man nicht
         zusieht. Deshalb ist hier jeder Schritt entweder bewiesen oder umkehrbar.
@@ -551,6 +576,52 @@
             Pfadprüfung, Schutz der letzten Kopie, Zielberechnung — und hält vor
             dem Dateisystemaufruf an. Gleicher Codepfad, keine Parallelfassung.</p>
           </div>
+          <div class="card">
+            <span class="flag">05 — Sicherungen</span>
+            <h3>Ein Backup wird nie die Kopie, die geht</h3>
+            <p>Was unter <code>backup</code>, <code>archiv</code>,
+            <code>snapshot</code>, <code>versions</code> oder
+            <code>.history</code> liegt, wird ausschließlich zur Prüfung
+            markiert — und kann auch „behalten" nicht gewinnen. Ein Backup zu
+            befördern hieße, das gepflegte Original zu löschen und die
+            redundante Kopie zu behalten.</p>
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:28px">
+          <span class="flag">Welche Kopie behalten wird</span>
+          <p>
+            <strong>Standardmäßig das Original</strong> — die älteste Kopie.
+            <em>Einstellungen → Which copy to keep</em> stellt auf die neueste
+            um, wenn es um Arbeitsdokumente geht. Beide Lesarten sind
+            berechtigt, und das Werkzeug hat das bisher stillschweigend
+            entschieden, zugunsten der neueren, mit einem Gewicht, das niemand
+            bemerken konnte.
+          </p>
+          <p>
+            Das Datum kommt <strong>aus der Datei</strong>, wo es eines gibt:
+            EXIF bei Fotos, das Container-Datum bei Video. Das überlebt das
+            Kopieren. Die Dateizeit nicht — <code>cp -p</code>, rsync und Syno
+            Drive übernehmen die ursprüngliche, ein schlichtes Kopieren oder
+            ein Download setzen sie auf jetzt. Die Dateizeit beantwortet also
+            „welche wurde zuletzt geschrieben", und das ist nicht die Frage.
+          </p>
+          <p>
+            Das Alter zählt <strong>innerhalb der Gruppe</strong>, nie absolut:
+            in einer alten Sammlung bekämen sonst alle Kopien denselben Wert und
+            das Signal verschwände. Es liegt bewusst zwischen den übrigen —
+            die älteste Kopie schlägt einen gut klingenden Ordnernamen und
+            verliert gegen <code>(1)</code> im Dateinamen und gegen einen
+            Backup-Pfad. Die sagen etwas über die Rolle der Datei, das Alter
+            nur etwas über die Uhr.
+          </p>
+          <p>
+            Bei einem <strong>exakten</strong> Duplikat greift davon nichts:
+            identische Bytes tragen identische eingebettete Daten, dort
+            entscheiden Dateizeit, Pfad und Name allein. Das Inhaltsdatum zahlt
+            sich bei neu gespeicherten Kopien aus — und genau die findet auch
+            der Wahrnehmungs-Hash.
+          </p>
         </div>
 
         <figure style="margin-top:32px">
@@ -582,6 +653,36 @@
     </div>
     <div class="body-indent">
       <div class="col">
+        <div class="field">
+          <span class="flag">Was eine Zeile ist</span>
+          <p>
+            <strong>Eine Gruppe ist ein Inhalt — und jede Datei, die ihn
+            enthält.</strong> Keine Datei, und auch kein „Duplikat": Das
+            Werkzeug kann vor dem Blick auf die Daten nicht wissen, welche
+            Kopie zuerst da war, also sind zunächst alle gleichrangig. Deshalb
+            ist eine Zeile eine Gruppe und nicht eine Datei mit angehängten
+            Duplikaten.
+          </p>
+          <p>
+            Eine Sammlung, die <em>45.056 Gruppen</em> und <em>94.542
+            beteiligte Dateien</em> meldet, hat also 45.056 verschiedene
+            Inhalte, gespeichert als 94.542 Dateien — gut zwei Kopien je
+            Inhalt.
+          </p>
+          <ul class="bullets">
+            <li><strong>Kopien</strong> — wie viele Dateien diesen Inhalt tragen.</li>
+            <li><strong>Dateigröße</strong> — die größte Kopie der Gruppe.</li>
+            <li><strong>Freigebbar</strong> — alle Kopien außer der größten.
+            Was frei wird, wenn genau eine bleibt. Eine Gruppe aus einer
+            2,5-GB-Datei und einer 5-MB-Datei meldet 5 MB — zugleich der
+            schnellste Weg, einen Treffer zu erkennen, der keiner ist.</li>
+            <li><strong>Ordner</strong> — über wie viele verschiedene Ordner
+            die Kopien verteilt sind.</li>
+            <li><strong>Ähnlichkeit</strong> — wie ähnlich sich die Mitglieder
+            sind; 100 % mit Haken heißt Byte für Byte nachgelesen.</li>
+          </ul>
+        </div>
+
         <figure>
           <div class="shot">
             <img class="only-light" src="../assets/shot-6033d06e8ee4.png" alt="Ergebnisliste mit sechs Gruppen, Ähnlichkeitswerten und Vorschlägen." width="1500">

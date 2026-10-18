@@ -514,7 +514,7 @@
   <div class="wrap">
     <div class="sechead">
       <div class="num">§ 02</div>
-      <h2>Four things standing between you and a lost file</h2>
+      <h2>Five things standing between you and a lost file</h2>
       <p class="sub">
         A tool that deletes on request is a tool nobody watches closely enough.
         So here every step is either proven or reversible.
@@ -549,6 +549,50 @@
             last-copy protection, destination arithmetic — and stops just short of
             the filesystem call. Same code path, not a parallel one.</p>
           </div>
+          <div class="card">
+            <span class="flag">05 — Backups</span>
+            <h3>A backup is never the copy that goes</h3>
+            <p>Anything under <code>backup</code>, <code>archiv</code>,
+            <code>snapshot</code>, <code>versions</code> or
+            <code>.history</code> is only ever flagged for review — and it can
+            never win "keep" either. Promoting a backup would delete the
+            curated original and leave the redundant copy behind.</p>
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:28px">
+          <span class="flag">Which copy it proposes to keep</span>
+          <p>
+            <strong>The original by default</strong> — the oldest copy.
+            <em>Settings → Which copy to keep</em> switches it to the newest if
+            a folder of working documents is what you have. Both readings are
+            legitimate, and the tool used to decide it silently, in favour of
+            the newest, at a weight too small to notice.
+          </p>
+          <p>
+            The date comes from <strong>inside the file</strong> wherever there
+            is one: EXIF for photos, the container date for video. That
+            survives copying. A file's own timestamp does not —
+            <code>cp -p</code>, rsync and Syno Drive carry the original across,
+            while a plain copy or a download set it to now. So the file date
+            answers "which was written last", which is not the question.
+          </p>
+          <p>
+            Age is weighed <strong>within the group</strong>, never as an
+            absolute: in an old library an absolute term would make every copy
+            score alike and the signal vanish. It sits deliberately between the
+            other signals — being the oldest outranks a good-looking folder
+            name, and loses to <code>(1)</code> in the filename and to a backup
+            path. Those say something about the file's role; age only about the
+            clock.
+          </p>
+          <p>
+            For an <strong>exact</strong> duplicate none of this applies:
+            identical bytes carry identical embedded dates, so there the file
+            date, the path and the name decide alone. The content date earns
+            its keep on re-saved copies — which is also where the perceptual
+            hash finds the pair.
+          </p>
         </div>
 
         <figure style="margin-top:32px">
@@ -579,7 +623,35 @@
     </div>
     <div class="body-indent">
       <div class="col">
-        <figure>
+        <div class="field">
+          <span class="flag">What one row is</span>
+          <p>
+            <strong>A group is one piece of content, and every file that holds
+            it.</strong> Not a file, and not "a duplicate": the tool has no way
+            to tell which copy came first until it looks at the dates, so all
+            copies start as peers of one another. That is why a row is a group
+            and not a file with duplicates hanging off it.
+          </p>
+          <p>
+            A library reporting <em>45,056 groups</em> and <em>94,542 files
+            involved</em> therefore holds 45,056 distinct contents, stored as
+            94,542 files — a little over two copies each.
+          </p>
+          <ul class="bullets">
+            <li><strong>Copies</strong> — how many files carry this content.</li>
+            <li><strong>File size</strong> — the largest copy in the group.</li>
+            <li><strong>Reclaimable</strong> — every copy except the largest.
+            What you get back by keeping exactly one. A group of a 2.5 GB file
+            and a 5 MB one reports 5 MB, which is also the quickest way to spot
+            a match that is not really a match.</li>
+            <li><strong>Folders</strong> — how many different folders the
+            copies are spread across.</li>
+            <li><strong>Similarity</strong> — how alike the members are; 100 %
+            with the mark means read back byte for byte.</li>
+          </ul>
+        </div>
+
+        <figure style="margin-top:32px">
           <div class="shot">
             <img class="only-light" src="assets/shot-6033d06e8ee4.png" alt="Results list with six groups, similarity scores and suggestions." width="1500">
             <img class="only-dark" src="assets/shot-606231d3baf8.png" alt="The same results list in dark mode." width="1500">
@@ -602,6 +674,29 @@
             similar photos apart. The preview honours the EXIF orientation flag.
           </figcaption>
         </figure>
+
+        <div class="field" style="margin-top:32px">
+          <span class="flag">One folder against another</span>
+          <p>
+            Grouping ignores folder structure already — groups come from
+            content, and paths play no part in forming them. What the path
+            search cannot ask is the question people actually have:
+            <strong>what under A also exists under B</strong>. The search box
+            matches one member; this needs a group reaching into both trees at
+            once. <em>Compare folders…</em> opens a row for it, and both sides
+            are chosen with the same picker as a scan — a NAS path does not fit
+            in a filter-sized box, and a truncated path is exactly as
+            convincing as a correct one.
+          </p>
+          <p>
+            The <strong>Folders</strong> view answers the same question one
+            level up, and can roll the pairs up a chosen number of levels.
+            Immediate parents are the right grain for <code>/a/Video</code>
+            against <code>/a/Videos</code> and the wrong one for two libraries
+            copied across: deep trees split one fact into hundreds of rows.
+            Rolled up, <code>/old</code> against <code>/new</code> is said once.
+          </p>
+        </div>
       </div>
     </div>
   </div>
