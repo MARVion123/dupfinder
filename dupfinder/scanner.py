@@ -1068,8 +1068,16 @@ class ScanEngine:
         """
         skip_exts = {str(e).lower() for e in self.config["fuzzy_skip_exts"]}
         ctph_min = max(0, int(self.config["ctph_min_size"]))
-        want_video = (bool(self.config["video_similarity"])
-                      and hashing.ffmpeg_available())
+        want_video = bool(self.config["video_similarity"])
+        if want_video and not hashing.ffmpeg_available():
+            # The one case worth interrupting the progress line for. Every
+            # other reason a film finds no partner is a fact about the
+            # library; this one is a fact about the machine, and it costs a
+            # whole scan to discover by looking at the result.
+            self._log_note(
+                "video matching is off: %s missing - re-encodes will not be found"
+                % ", ".join(hashing.video_support()["missing"]))
+            want_video = False
         picked = []
         for row in rows:
             if row["id"] in redundant:

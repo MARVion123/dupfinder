@@ -236,6 +236,7 @@ class App:
             "scan": self.scanner.status(),
             "ai": self.ai.status(),
             "pillow": hashing.pillow_available(),
+            "video": hashing.video_support(),
             "roots": available_roots(self.config["roots_allowlist"]),
         }
 

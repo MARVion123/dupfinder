@@ -85,5 +85,41 @@ check("a video signature is recognised", hashing.is_video_signature(same))
 check("video_dhash returns None without ffmpeg",
       hashing.video_dhash(__file__) is None)
 
+# The regression that cost a 67-hour scan. DSM ships a stripped /bin/ffmpeg
+# with no ffprobe next to it. ffmpeg_available() asked only about ffmpeg, so
+# the pass reported itself as on - while video_dhash seeks to fractions of a
+# running time it gets from ffprobe, so with ffprobe absent every single file
+# came back None. On and finding nothing, with nothing said.
+print("")
+print("ffprobe is part of the answer, not an extra")
+saved = (hashing._FFMPEG_CHECKED, hashing._FFMPEG, hashing._FFPROBE)
+try:
+    def pretend(ffmpeg, ffprobe):
+        hashing._FFMPEG_CHECKED = True
+        hashing._FFMPEG = ffmpeg
+        hashing._FFPROBE = ffprobe
+
+    pretend("/bin/ffmpeg", None)
+    check("ffmpeg without ffprobe does not count as available",
+          hashing.ffmpeg_available() is False)
+    report = hashing.video_support()
+    check("and the report names the missing piece",
+          report["missing"] == ["ffprobe"], str(report["missing"]))
+    check("the report is not ok", report["ok"] is False)
+
+    pretend(None, "/bin/ffprobe")
+    check("ffprobe alone is no better", hashing.ffmpeg_available() is False)
+    check("and ffmpeg is named", "ffmpeg" in hashing.video_support()["missing"])
+
+    pretend("/bin/ffmpeg", "/bin/ffprobe")
+    check("both present: available", hashing.ffmpeg_available() is True)
+    report = hashing.video_support()
+    check("nothing missing", report["ok"] and report["missing"] == [],
+          str(report["missing"]))
+    check("and it says where they are",
+          report["ffmpeg"] == "/bin/ffmpeg" and report["ffprobe"] == "/bin/ffprobe")
+finally:
+    hashing._FFMPEG_CHECKED, hashing._FFMPEG, hashing._FFPROBE = saved
+
 print()
 sys.exit(1 if fails else 0)

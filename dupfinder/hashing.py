@@ -517,13 +517,52 @@ def _find_tool(name):
     return None
 
 
-def ffmpeg_available() -> bool:
+def _locate_tools():
     global _FFMPEG_CHECKED, _FFMPEG, _FFPROBE
     if not _FFMPEG_CHECKED:
         _FFMPEG_CHECKED = True
         _FFMPEG = _find_tool("ffmpeg")
         _FFPROBE = _find_tool("ffprobe")
-    return bool(_FFMPEG) and pillow_available()
+    return _FFMPEG, _FFPROBE
+
+
+def ffmpeg_available() -> bool:
+    """Whether a video can actually be hashed - not merely whether ffmpeg exists.
+
+    ffprobe belongs in this answer. Frames are taken at fractions of the
+    running time so that two encodes of the same film line up, and the running
+    time comes from ffprobe; without it `video_dhash` returns None for every
+    single file. DSM ships a stripped /bin/ffmpeg with no ffprobe beside it, so
+    "ffmpeg is there" was true and meaningless on exactly the machine this was
+    written for - a scan reported video matching as on and found nothing, for
+    sixty-seven hours, without a word.
+    """
+    ffmpeg, ffprobe = _locate_tools()
+    return bool(ffmpeg) and bool(ffprobe) and pillow_available()
+
+
+def video_support():
+    """What the video pass can do here, and if it cannot, which piece is missing.
+
+    Returned by the status endpoint rather than merely logged: a silently
+    disabled pass is indistinguishable from a library with no re-encodes in
+    it, and the two call for completely different reactions.
+    """
+    ffmpeg, ffprobe = _locate_tools()
+    missing = []
+    if not ffmpeg:
+        missing.append("ffmpeg")
+    if not ffprobe:
+        missing.append("ffprobe")
+    if not pillow_available():
+        missing.append("Pillow")
+    return {
+        "ok": not missing,
+        "ffmpeg": ffmpeg or "",
+        "ffprobe": ffprobe or "",
+        "pillow": pillow_available(),
+        "missing": missing,
+    }
 
 
 def video_probe(path: str):

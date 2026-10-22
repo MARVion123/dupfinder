@@ -99,6 +99,7 @@
       renderScanStatus(data.scan, data.resumable);
       renderAiStatus(data.ai);
       window.__pillow = data.pillow;
+      window.__video = data.video;
     }).catch(function () { /* transient - keep polling */ });
   }
 
@@ -908,12 +909,28 @@
       $("setSkipExts").value = (c.fuzzy_skip_exts || []).join("\n");
       $("setExcludes").value = (c.exclude_dirs || []).join("\n");
       $("setRoots").value = (c.roots_allowlist || []).join("\n");
-      $("settingsNote").textContent = window.__pillow
-        ? "Pillow detected — perceptual image matching is available."
-        : "Pillow is not installed, so image similarity is limited to fuzzy hashing.";
+      $("settingsNote").textContent = settingsNote();
       $("modalSettings").classList.remove("hidden");
       loadDbUsage();
     }).catch(fail);
+  }
+
+  // What the two optional pieces can do here. Worth two sentences rather
+  // than a tick: a video pass that silently does nothing looks exactly like
+  // a library with no re-encodes in it, and the difference matters.
+  function settingsNote() {
+    var lines = [];
+    lines.push(window.__pillow
+      ? "Pillow detected — perceptual image matching is available."
+      : "Pillow is not installed, so image similarity is limited to fuzzy hashing.");
+    var v = window.__video;
+    if (v && v.ok) {
+      lines.push("ffmpeg and ffprobe found — re-encoded video is matched by frame.");
+    } else if (v) {
+      lines.push("Video matching is off: " + (v.missing || []).join(", ")
+        + " missing. Films re-encoded or at another bitrate will not be found.");
+    }
+    return lines.join(" ");
   }
 
   // ------------------------------------------------------- database
