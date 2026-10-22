@@ -232,6 +232,14 @@
         download set it to now. Where no two copies differ in date, location
         and filename decide alone.</span>
       </label>
+      <label class="check"><input type="checkbox" id="setResumeOnStart"> Carry an interrupted scan on when the service restarts
+        <span class="hint">For a NAS that reboots on a schedule. Without it a
+        weekly restart means a weekly trip here, and a scan that needs longer
+        than the gap between reboots would never finish. Only scans a restart
+        cut short — one you paused yourself stays paused, because that was a
+        decision. The walk runs again and re-reads only what changed; files
+        that have gone are marked, and new ones are picked up.</span>
+      </label>
       <label class="check"><input type="checkbox" id="setProtect"> Never delete the last copy of a group</label>
       <label class="check"><input type="checkbox" id="setImages"> Perceptual image matching (needs Pillow)</label>
       <label class="check"><input type="checkbox" id="setQuick"> Quick rescan on by default</label>

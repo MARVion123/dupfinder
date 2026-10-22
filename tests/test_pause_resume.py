@@ -175,6 +175,9 @@ def main() -> int:
         from dupfinder.server import App
         db.execute("UPDATE scans SET state='running', finished_at=NULL WHERE id=?",
                    (second,))
+        # Automatic resuming is the next section's subject; here the parking
+        # itself is what is being checked, so it is switched off.
+        cfg.update({"resume_on_start": False})
         app = App(cfg)
         row = app.db.one("SELECT state, error FROM scans WHERE id=?", (second,))
         check("it comes back as paused, not cancelled", row["state"] == "paused",
@@ -200,6 +203,81 @@ def main() -> int:
                      (second,))["n"] == before)
         check("and so is the hash cache",
               db.one("SELECT COUNT(*) AS n FROM hash_cache")["n"] > 0)
+
+        # ---- what a re-walk must notice --------------------------------
+        print("\na resumed scan re-reads what changed and drops what is gone")
+        _, db3, eng3 = engine_for(tmp, "changed")
+        tree3 = os.path.join(tmp, "tree3")
+        make_tree(tree3, pairs=6)
+        s3 = eng3.start(tree3)
+        wait_idle(eng3)
+
+        edited = os.path.join(tree3, "a", "f000.bin")
+        removed = os.path.join(tree3, "b", "f001.bin")
+        added = os.path.join(tree3, "a", "brandnew.bin")
+        before = db3.one("SELECT md5, size FROM files WHERE scan_id=? AND path=?",
+                         (s3, edited))
+
+        with open(edited, "wb") as fh:          # same path, different content
+            fh.write(os.urandom(200_000))
+        os.utime(edited, (time.time(), time.time()))
+        os.remove(removed)
+        with open(added, "wb") as fh:
+            fh.write(os.urandom(30_000))
+
+        db3.execute("UPDATE scans SET state='paused' WHERE id=?", (s3,))
+        eng3.resume(s3)
+        wait_idle(eng3)
+
+        after = db3.one("SELECT md5, size, mtime FROM files WHERE scan_id=? AND path=?",
+                        (s3, edited))
+        # The edited file now has a size nothing else shares, so it is no
+        # longer a duplicate candidate and never gets hashed again. What must
+        # not happen is the row keeping the hash of the bytes that are gone.
+        check("the hash of the old content is dropped",
+              after["md5"] is None,
+              "%s -> %s" % (before["md5"], after["md5"]))
+        check("and its recorded size is the current one",
+              after["size"] == os.path.getsize(edited),
+              "%s vs %s" % (after["size"], os.path.getsize(edited)))
+
+        gone = db3.one("SELECT status FROM files WHERE scan_id=? AND path=?",
+                       (s3, removed))
+        check("a file that has gone is marked missing",
+              gone and gone["status"] == "missing", str(gone and gone["status"]))
+
+        fresh = db3.one("SELECT id FROM files WHERE scan_id=? AND path=?",
+                        (s3, added))
+        check("a file that appeared is picked up", fresh is not None)
+
+        # ---- the weekly reboot ------------------------------------------
+        print("\nan interrupted scan carries on by itself when asked to")
+        cfg3 = Config(os.path.join(tmp, "changed"))
+        cfg3.update({"roots_allowlist": [tmp], "resume_on_start": True})
+        db3.execute("UPDATE scans SET state='running', finished_at=NULL, error=NULL "
+                    "WHERE id=?", (s3,))
+        app3 = App(cfg3)
+        st3 = wait_idle(app3.scanner)
+        check("it started again without being asked",
+              st3["scan_id"] == s3 and st3["state"] == "done",
+              "%s / %s" % (st3["scan_id"], st3["state"]))
+
+        print("\nbut a deliberate pause is left alone")
+        db3.execute("UPDATE scans SET state='paused', finished_at=NULL, error=NULL "
+                    "WHERE id=?", (s3,))
+        app4 = App(cfg3)
+        check("nothing started", app4.scanner.status()["state"] != "running",
+              app4.scanner.status()["state"])
+        check("and it is still on offer", app4.scanner.resumable(s3) is not None)
+
+        print("\nand the switch turns it off")
+        cfg3.update({"resume_on_start": False})
+        db3.execute("UPDATE scans SET state='running', finished_at=NULL, error=NULL "
+                    "WHERE id=?", (s3,))
+        app5 = App(cfg3)
+        check("parked, not restarted",
+              app5.scanner.status()["state"] != "running"
+              and app5.scanner.resumable(s3) is not None)
 
         print("\nand the obvious refusals")
         check("resuming when there is nothing parked fails clearly",

@@ -640,6 +640,9 @@ class ScanEngine:
     # ---- phase 1: walk ----------------------------------------------
     def _walk(self, scan_id, root, opts):
         self._phase("walk")
+        # Everything written by this walk is stamped with a time at or after
+        # this one. What still carries an older stamp was not met this time.
+        walk_started = time.time()
         excludes = set(self.config["exclude_dirs"])
         # One compiled pattern instead of a loop of fnmatch calls. The loop ran
         # five times per file and cost more than reading the directory did.
@@ -747,9 +750,32 @@ class ScanEngine:
         if batch:
             self._flush_files(batch)
         self.db.dir_put_many(dir_rows)
+        self._mark_vanished(scan_id, walk_started)
         if prev_scan is not None:
             self._carry_over(scan_id, prev_scan, reuse)
             self._set(reused_dirs=reused_dirs)
+
+    def _mark_vanished(self, scan_id, walk_started):
+        """Flag rows for paths this walk did not meet.
+
+        Only a re-walk can produce any: on a first pass every row was just
+        written. It matters for a resumed scan, where the tree has had time to
+        change - without it the results would keep offering files that are no
+        longer there, and a deletion would fail on a path that moved.
+
+        'deleted' and 'quarantined' are left alone. They already say the file
+        is not at this path and why, which is more than 'missing' says.
+        """
+        cur = self.db.execute(
+            """UPDATE files SET status='missing'
+               WHERE scan_id=? AND status IN ('present','linked')
+                 AND (seen_at IS NULL OR seen_at < ?)""",
+            (scan_id, walk_started),
+        )
+        gone = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+        if gone:
+            self._log_note("%d file(s) have gone since the last pass" % gone)
+        return gone
 
     def _previous_scan(self, scan_id, root):
         """The last scan of this exact root that ran to completion.
@@ -790,11 +816,44 @@ class ScanEngine:
             self._set(files_seen=row["c"], bytes_seen=row["b"])
 
     def _flush_files(self, batch):
+        """Record what the walk saw, updating a path it has seen before.
+
+        It used to be INSERT OR IGNORE, which is right for one walk and wrong
+        for the second: a resumed scan re-walks the tree, and a file edited in
+        the meantime kept the size and mtime of the first pass. The hash cache
+        is keyed on exactly those three values, so the stale row found the
+        stale hash and the change went unnoticed. Writing the current values
+        turns that into a cache miss, which is what a changed file deserves.
+
+        `seen_at` is how the walk afterwards tells which paths are gone. The
+        status is only lifted back out of 'missing'; 'linked', 'deleted' and
+        'quarantined' say something this pass has no business overwriting.
+        """
+        now = time.time()
         self.db.executemany(
-            """INSERT OR IGNORE INTO files
-               (scan_id,path,parent,name,ext,size,mtime,dev,inode)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
-            batch,
+            """INSERT INTO files
+               (scan_id,path,parent,name,ext,size,mtime,dev,inode,seen_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(scan_id,path) DO UPDATE SET
+                 size=excluded.size, mtime=excluded.mtime,
+                 dev=excluded.dev, inode=excluded.inode,
+                 seen_at=excluded.seen_at,
+                 -- Hashes describe the bytes that were there. When the size
+                 -- or the mtime has moved they describe bytes that are gone,
+                 -- and a row claiming a hash for content it no longer holds
+                 -- is worse than a row claiming nothing. Dropping them is
+                 -- also what makes a changed file a candidate again if it
+                 -- later gains a twin.
+                 quick=CASE WHEN %(ch)s THEN NULL ELSE files.quick END,
+                 md5=CASE WHEN %(ch)s THEN NULL ELSE files.md5 END,
+                 fuzzy=CASE WHEN %(ch)s THEN NULL ELSE files.fuzzy END,
+                 dhash=CASE WHEN %(ch)s THEN NULL ELSE files.dhash END,
+                 taken_at=CASE WHEN %(ch)s THEN NULL ELSE files.taken_at END,
+                 status=CASE WHEN files.status='missing'
+                             THEN 'present' ELSE files.status END"""
+            % {"ch": "files.size <> excluded.size "
+                     "OR abs(files.mtime - excluded.mtime) >= 0.001"},
+            [tuple(row) + (now,) for row in batch],
         )
 
     # ---- phase 2: size ----------------------------------------------

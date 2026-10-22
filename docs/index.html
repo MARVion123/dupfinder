@@ -862,10 +862,20 @@
           </p>
           <p style="margin:0;max-width:var(--measure)">
             A scan cut short by a restart of the service is parked the same
-            way. It used to be recorded as cancelled, which was true about the
-            process and wrong about the data. The offer comes back by name,
-            with the folder and how far it got, because a bare "Resume" is a
-            button nobody dares press.
+            way, and carried on by itself when the service returns. That is
+            the case this was built for: a NAS that reboots on a schedule
+            would otherwise need a visit every week, and a scan needing longer
+            than the gap between reboots would never finish at all. Only scans
+            a restart cut short — one paused by hand stays paused, because
+            that was a decision.
+          </p>
+          <p style="margin:10px 0 0;max-width:var(--measure)">
+            The tree has had time to change, so the walk records what it finds
+            now. A file whose size or mtime moved loses its stored hashes —
+            they describe bytes that are gone — and is read again. A file that
+            has disappeared is marked rather than offered for deletion at a
+            path that no longer exists. A new one is picked up. Everything
+            untouched comes from the cache.
           </p>
         </div>
       </div>

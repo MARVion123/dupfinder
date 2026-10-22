@@ -875,10 +875,21 @@
           </p>
           <p style="margin:0;max-width:var(--measure)">
             Ein Lauf, den ein Neustart des Dienstes unterbricht, wird genauso
-            beiseitegestellt. Bisher wurde er als abgebrochen vermerkt — über
-            den Prozess richtig, über die Daten falsch. Das Angebot kommt
-            benannt zurück, mit Ordner und erreichtem Stand, denn ein bloßes
-            „Fortsetzen" ist ein Knopf, den niemand zu drücken wagt.
+            beiseitegestellt — und von selbst fortgesetzt, sobald der Dienst
+            zurück ist. Dafür ist das gebaut: Eine NAS, die planmäßig neu
+            startet, bräuchte sonst jede Woche einen Besuch, und ein Lauf, der
+            länger dauert als der Abstand zwischen zwei Neustarts, käme nie zu
+            Ende. Nur Läufe, die ein Neustart unterbrochen hat — eine von Hand
+            gesetzte Pause bleibt eine Pause, denn die war eine Entscheidung.
+          </p>
+          <p style="margin:10px 0 0;max-width:var(--measure)">
+            Der Baum hatte Zeit, sich zu ändern, also hält der Walk fest, was
+            er <em>jetzt</em> vorfindet. Eine Datei, deren Größe oder
+            Änderungszeit sich bewegt hat, verliert ihre gespeicherten Hashes —
+            die beschreiben Bytes, die es nicht mehr gibt — und wird neu
+            gelesen. Eine verschwundene wird markiert, statt an einem Pfad zum
+            Löschen angeboten zu werden, den es nicht mehr gibt. Eine neue
+            kommt hinzu. Alles Unveränderte kommt aus dem Zwischenspeicher.
           </p>
         </div>
       </div>

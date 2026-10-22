@@ -72,6 +72,11 @@ def truncate_path(path, depth):
     return (sep + head) if path.startswith(sep) else head
 
 
+# Written when a restart cuts a scan short, and read when deciding whether to
+# carry it on by itself. One constant rather than the same sentence twice.
+INTERRUPTED = "Interrupted by a service restart - resumable"
+
+
 class ApiError(Exception):
     def __init__(self, message, status=400):
         super().__init__(message)
@@ -118,10 +123,35 @@ class App:
         # about the data - hours of hashing looked like a dead end.
         self.db.execute(
             "UPDATE scans SET state='paused', finished_at=COALESCE(finished_at,?), "
-            "error=COALESCE(error,'Interrupted by a service restart - resumable') "
-            "WHERE state='running'",
-            (time.time(),),
+            "error=COALESCE(error,?) WHERE state='running'",
+            (time.time(), INTERRUPTED),
         )
+        self._resume_after_restart()
+
+    def _resume_after_restart(self):
+        """Carry on a scan the restart cut short, if that is wanted.
+
+        Only one the restart interrupted - the marker above says which. A scan
+        somebody paused deliberately stays paused; a reboot is no reason to
+        overrule a decision.
+
+        A failure here must not keep the service from starting. The scan is
+        the thing that can be retried; the server is not.
+        """
+        if not self.config["resume_on_start"]:
+            return
+        row = self.db.one(
+            "SELECT id, error FROM scans WHERE state='paused' "
+            "ORDER BY id DESC LIMIT 1")
+        if not row or row["error"] != INTERRUPTED:
+            return
+        try:
+            self.scanner.resume(row["id"])
+        except Exception as exc:                        # noqa: BLE001
+            self.db.execute(
+                "UPDATE scans SET error=? WHERE id=?",
+                ("%s; could not be resumed automatically: %s"
+                 % (INTERRUPTED, exc), row["id"]))
 
     # -- routing --------------------------------------------------------
     def handle(self, method, path, query, body):

@@ -61,7 +61,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 PKG_NAME = "dupfinder"
-BUILD_NUMBER = "0020"
+BUILD_NUMBER = "0021"
 
 # Where Package Center's Help and publisher links point.
 HOMEPAGE = "https://marvion123.github.io/dupfinder/"

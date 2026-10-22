@@ -101,6 +101,15 @@ DEFAULTS = {
     # version". Both are legitimate - a photo library wants the first, a
     # folder of working documents the second - and the tool used to decide it
     # silently, in favour of the newest, at a weight too small to notice.
+    # Carry an interrupted scan on when the service comes back. Aimed at a
+    # NAS that reboots on a schedule: without it a weekly restart means a
+    # weekly trip to the browser, and a scan that takes longer than a week
+    # between reboots would never finish at all.
+    #
+    # Only scans the restart interrupted. A scan somebody paused on purpose
+    # stays paused - that was a decision, and a reboot is no reason to
+    # overrule it.
+    "resume_on_start": True,
     "keep_prefers": "oldest",
     "ctph_min_size": 0,
     "fuzzy_max_size": 536870912,   # 512 MiB - ignored while fuzzy_max_bytes > 0

@@ -144,6 +144,28 @@ all of it. What a resume actually costs is one more pass over the directory
 tree and the arithmetic of grouping — minutes, against the hours the hashing
 took.
 
+**A restart on a schedule is the case this was built for.** A NAS that
+reboots every Sunday night would otherwise need a trip to the browser every
+Monday, and a scan needing longer than the gap between reboots would never
+finish at all. *Settings → Carry an interrupted scan on when the service
+restarts* (on by default) starts it again by itself. Only scans a restart cut
+short: one paused by hand stays paused, because that was a decision.
+
+**What a resumed walk re-reads.** The tree has had time to change, so the walk
+records what it finds now rather than keeping what it found before. A file
+whose size or mtime moved loses its stored hashes — they describe bytes that
+are gone, and a row claiming a hash for content it no longer holds is worse
+than a row claiming nothing — and is read again. A file that has disappeared
+is marked *missing* instead of being offered for deletion at a path that no
+longer exists. A file that appeared is picked up. Everything untouched comes
+from the cache.
+
+That last part used to be wrong in a way nothing would have shown: the walk
+inserted with `INSERT OR IGNORE`, which is right for one pass and silently
+wrong for the second. An edited file kept the size and mtime of the first
+walk, the hash cache is keyed on exactly those, so the stale row found the
+stale hash and the change went unnoticed.
+
 A scan interrupted by a service restart is parked the same way. It used to be
 recorded as *cancelled*, which was true about the process and wrong about the
 data: hours of hashing looked like a dead end. The interface offers it back by

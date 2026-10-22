@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS files (
     -- 'linked' means the file is still there and still readable, but its
     -- bytes are now shared with an identical twin instead of duplicated.
     status    TEXT DEFAULT 'present',     -- present|deleted|quarantined|missing|linked
+    -- When the walk last saw this path. A resumed scan walks the tree again,
+    -- and anything it does not meet this time has gone since - without this
+    -- the scan would carry ghosts and offer to delete files that are no
+    -- longer there.
+    seen_at   REAL,
     UNIQUE(scan_id, path)
 );
 CREATE INDEX IF NOT EXISTS idx_files_scan_size ON files(scan_id, size);
@@ -177,10 +182,13 @@ class Database:
         # Columns added after a database was first created. CREATE TABLE IF
         # NOT EXISTS above does nothing to an existing table, so each addition
         # needs its own guarded ALTER.
-        for table in ("files", "hash_cache"):
+        for table, column, decl in (("files", "taken_at", "REAL"),
+                                    ("hash_cache", "taken_at", "REAL"),
+                                    ("files", "seen_at", "REAL")):
             have = {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
-            if have and "taken_at" not in have:
-                conn.execute("ALTER TABLE %s ADD COLUMN taken_at REAL" % table)
+            if have and column not in have:
+                conn.execute("ALTER TABLE %s ADD COLUMN %s %s"
+                             % (table, column, decl))
                 conn.commit()
 
         version = conn.execute("PRAGMA user_version").fetchone()[0]

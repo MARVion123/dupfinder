@@ -138,8 +138,13 @@
 
     if (running) {
       panel.classList.remove("hidden");
+      // A resumed scan starts at step 1 again and looks, from the outside,
+      // exactly like one that threw the work away. It did not - the indexing
+      // is the cheap part and the hashes are still in the cache - but nothing
+      // said so, and "Step 1/7" after an hours-long scan reads as a loss.
       $("progPhase").textContent =
-        "Step " + scan.phase_index + "/" + scan.phase_total + " — " + scan.phase_label;
+        "Step " + scan.phase_index + "/" + scan.phase_total + " — " + scan.phase_label
+        + (scan.resumed ? "  ·  carrying on a paused scan" : "");
       $("progElapsed").textContent = fmtDuration(scan.elapsed) + " elapsed";
       var bar = $("progBar");
       if (scan.phase_progress === null || scan.phase_progress === undefined) {
@@ -155,6 +160,14 @@
         stat("Data seen", fmtBytes(scan.bytes_seen)) +
         stat("Hashed", fmtBytes(scan.bytes_hashed)) +
         stat("Reused from cache", fmtNum(scan.cache_hits)) +
+        // Indexing reads no file contents, so a cache count of zero here is
+        // correct and not a sign that the resume failed. Said plainly,
+        // because this is the exact moment it looks like it did.
+        (scan.resumed && scan.phase === "walk"
+          ? '<span class="note">Indexing runs again — it reads no file'
+            + ' contents. The hashes stay in the cache and are reused from'
+            + ' step 3 on.</span>'
+          : "") +
         stat("Groups so far", fmtNum(scan.groups_found)) +
         helperStat(scan.helpers) +
         (scan.note ? '<span class="note">' + esc(scan.note) + "</span>" : "");
@@ -885,6 +898,7 @@
       $("setMaxGroups").value = c.ai_max_groups;
       $("setDelMode").value = c.delete_mode;
       $("setKeepPrefers").value = c.keep_prefers || "oldest";
+      $("setResumeOnStart").checked = !!c.resume_on_start;
       $("setProtect").checked = !!c.protect_last_copy;
       $("setImages").checked = !!c.image_similarity;
       $("setQuick").checked = !!c.quick_rescan;
@@ -971,6 +985,7 @@
       ai_max_groups: Number($("setMaxGroups").value) || 300,
       delete_mode: $("setDelMode").value,
       keep_prefers: $("setKeepPrefers").value,
+      resume_on_start: $("setResumeOnStart").checked,
       protect_last_copy: $("setProtect").checked,
       image_similarity: $("setImages").checked,
       quick_rescan: $("setQuick").checked,
