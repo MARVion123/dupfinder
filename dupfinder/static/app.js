@@ -96,18 +96,43 @@
   // ---------------------------------------------------------------- status polling
   function pollStatus() {
     api("/api/status").then(function (data) {
-      renderScanStatus(data.scan);
+      renderScanStatus(data.scan, data.resumable);
       renderAiStatus(data.ai);
       window.__pillow = data.pillow;
     }).catch(function () { /* transient - keep polling */ });
   }
 
-  function renderScanStatus(scan) {
+  // The phase names the server stores are keys; these are what the progress
+  // panel already shows for the same steps.
+  var PHASE_LABELS = {
+    walk: "indexing", size: "grouping by size", quick: "partial hashing",
+    md5: "full hashing", verify: "byte-for-byte verification",
+    fuzzy: "near-duplicate analysis", group: "building groups",
+  };
+  function phaseLabel(key) { return PHASE_LABELS[key] || key; }
+
+  function renderScanStatus(scan, resumable) {
     var running = scan.state === "running";
     var panel = $("progress");
     $("btnCancel").classList.toggle("hidden", !running);
+    $("btnPause").classList.toggle("hidden", !running);
     $("btnRescan").classList.toggle("hidden", running || !state.lastRoot);
     $("btnPick").disabled = running;
+
+    // What is parked, named rather than implied: a bare "Resume" with no path
+    // and no count is a button nobody dares press.
+    state.resumable = resumable || null;
+    var offer = !running && !!resumable;
+    $("btnResume").classList.toggle("hidden", !offer);
+    $("resumeBar").classList.toggle("hidden", !offer);
+    if (offer) {
+      var step = resumable.phase ? phaseLabel(resumable.phase) : "";
+      $("resumeWhat").textContent =
+        resumable.root
+        + (resumable.files_seen ? " · " + fmtNum(resumable.files_seen) + " files indexed" : "")
+        + (step ? " · stopped during " + step : "")
+        + ". The hashes are on disk; carrying on costs another walk, not the hashing again.";
+    }
 
     if (scan.root) state.lastRoot = scan.root;
 
@@ -618,6 +643,38 @@
 
     $("btnPick").addEventListener("click", function () {
       openPicker(state.lastRoot || "", "scan");
+    });
+
+    $("btnPause").addEventListener("click", function () {
+      api("/api/scan/pause", { method: "POST", body: {} })
+        .then(function () {
+          toast("Paused. Everything found so far is kept — resume when you like.");
+        }).catch(fail);
+    });
+
+    function doResume() {
+      var id = state.resumable && state.resumable.scan_id;
+      api("/api/scan/resume", { method: "POST", body: { scan_id: id || null } })
+        .then(function () {
+          toast("Carrying on. The walk runs again; the hashing does not.");
+          loadGroups();
+        }).catch(fail);
+    }
+    $("btnResume").addEventListener("click", doResume);
+    $("btnResumeBar").addEventListener("click", doResume);
+
+    $("btnDiscard").addEventListener("click", function () {
+      var id = state.resumable && state.resumable.scan_id;
+      confirmThen(
+        "Discard the paused scan?",
+        "Its files, hashes and groups stay exactly where they are — only the "
+        + "offer to carry on goes away. The hash cache is untouched, so a "
+        + "fresh scan over the same folder is still cheap.",
+        function () {
+          api("/api/scan/discard", { method: "POST", body: { scan_id: id || null } })
+            .then(function () { $("resumeBar").classList.add("hidden"); })
+            .catch(fail);
+        });
     });
     $("btnStartScan").addEventListener("click", function () {
       if (!state.pickPath) { toast("Pick a folder first", true); return; }

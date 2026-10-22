@@ -19,7 +19,10 @@
   </div>
   <div class="topbar-actions">
     <button id="btnPick" class="primary">Choose folder &amp; scan</button>
+    <button id="btnPause" class="ghost hidden"
+            title="Stop here and keep everything — the hashes are on disk, so carrying on later costs a walk, not the hours again">Pause</button>
     <button id="btnCancel" class="danger hidden">Stop scan</button>
+    <button id="btnResume" class="primary hidden">Resume scan</button>
     <button id="btnRescan" class="ghost hidden">Run again</button>
     <button id="btnSuggest" class="ghost">AI suggestions</button>
     <button id="btnFolders" class="ghost" title="Folders that hold the same files">Folders</button>
@@ -27,6 +30,20 @@
     <button id="btnSettings" class="ghost" title="Settings">⚙</button>
   </div>
 </header>
+
+<!-- Shown when a scan was paused or cut short by a restart. It names what is
+     waiting, because "resume" without a path and a count is a button nobody
+     dares press. -->
+<section id="resumeBar" class="panel resumebar hidden">
+  <div>
+    <strong>A scan is waiting to be carried on.</strong>
+    <span id="resumeWhat" class="muted"></span>
+  </div>
+  <div class="resumebar-actions">
+    <button id="btnResumeBar" class="primary">Resume</button>
+    <button id="btnDiscard" class="ghost">Discard it</button>
+  </div>
+</section>
 
 <section id="progress" class="panel progress hidden">
   <div class="progress-head">
@@ -132,7 +149,7 @@
   </table>
   <div id="emptyState" class="empty">
     <p>No results yet.</p>
-    <p class="muted">Pick a folder and start a scan. There is no limit on how long it runs — you can stop it at any time and the partial results stay.</p>
+    <p class="muted">Pick a folder and start a scan. There is no limit on how long it runs — you can stop it at any time and the partial results stay, or <strong>pause</strong> it and carry on later. A pause survives a restart of the server: the hashes are on disk, so resuming costs another walk, not the hashing again.</p>
   </div>
   <div class="pager">
     <button id="btnPrev" class="ghost small">◀ Previous</button>

@@ -110,9 +110,15 @@ class App:
         self.started_at = time.time()
         # A scan cannot survive a restart, so anything still marked "running"
         # in the database was interrupted by a reboot or a crash.
+        # A scan cannot survive a restart, but its work can: the file index is
+        # in `files` and every hash in `hash_cache`, both on disk. So an
+        # interrupted scan is parked as paused rather than written off as
+        # cancelled, and can be carried on from the interface. Before this it
+        # was marked cancelled, which was true about the process and wrong
+        # about the data - hours of hashing looked like a dead end.
         self.db.execute(
-            "UPDATE scans SET state='cancelled', finished_at=COALESCE(finished_at,?), "
-            "error=COALESCE(error,'Interrupted by a service restart') "
+            "UPDATE scans SET state='paused', finished_at=COALESCE(finished_at,?), "
+            "error=COALESCE(error,'Interrupted by a service restart - resumable') "
             "WHERE state='running'",
             (time.time(),),
         )
@@ -157,6 +163,12 @@ class App:
                 return self.api_scan_start(body or {})
             if path == "/api/scan/cancel":
                 return {"cancelled": self.scanner.cancel()}
+            if path == "/api/scan/pause":
+                return {"paused": self.scanner.pause()}
+            if path == "/api/scan/resume":
+                return self.api_scan_resume(body or {})
+            if path == "/api/scan/discard":
+                return self.api_scan_discard(body or {})
             if path == "/api/suggest":
                 return self.api_suggest(body or {})
             if path == "/api/suggest/cancel":
@@ -175,9 +187,22 @@ class App:
 
     # -- endpoints ------------------------------------------------------
     def api_status(self):
+        # What is on offer to be carried on. Reported with every status poll
+        # rather than on request, because the moment it matters most is a
+        # fresh page after a restart: nothing is running, and without this the
+        # interface has no way to know that hours of hashing are waiting.
+        parked = self.scanner.resumable()
+        resumable = None
+        if parked:
+            resumable = {
+                "scan_id": parked["id"], "root": parked["root"],
+                "phase": parked["phase"], "stopped_at": parked["finished_at"],
+                "files_seen": parked["files_seen"],
+            }
         return {
             "version": __version__,
             "uptime": round(time.time() - self.started_at, 1),
+            "resumable": resumable,
             "scan": self.scanner.status(),
             "ai": self.ai.status(),
             "pillow": hashing.pillow_available(),
@@ -296,6 +321,31 @@ class App:
             parent_out = ""
         return {"path": path, "parent": parent_out, "dirs": dirs,
                 "file_count": files, "skipped_dirs": skipped}
+
+    def api_scan_discard(self, body):
+        """Stop offering a paused scan to be resumed.
+
+        Only the offer goes: its files, hashes and groups stay exactly where a
+        cancelled scan would leave them, and the hash cache is untouched, so a
+        fresh scan over the same tree is still cheap.
+        """
+        scan_id = body.get("scan_id")
+        row = self.scanner.resumable(int(scan_id) if scan_id else None)
+        if row is None:
+            raise ApiError("No paused scan", 404)
+        self.db.execute("UPDATE scans SET state='cancelled' WHERE id=?", (row["id"],))
+        return {"ok": True, "scan_id": row["id"]}
+
+    def api_scan_resume(self, body):
+        """Carry on a paused scan. Without an id: the most recent paused one."""
+        scan_id = body.get("scan_id")
+        try:
+            resumed = self.scanner.resume(int(scan_id) if scan_id else None)
+        except RuntimeError as exc:
+            raise ApiError(str(exc), 409)
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+        return {"ok": True, "scan_id": resumed}
 
     def api_scan_start(self, body):
         root = (body.get("root") or "").strip()

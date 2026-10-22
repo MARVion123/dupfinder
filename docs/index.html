@@ -849,6 +849,25 @@
             tool turns on for you — people start a scan and go on holiday.
           </p>
         </div>
+
+        <div class="field" style="margin-top:24px">
+          <span class="flag">Stopping without paying twice</span>
+          <p style="margin:0 0 10px;max-width:var(--measure)">
+            <strong>Pause</strong> parks a scan instead of writing it off, and
+            a resume does not re-enter the phase it stopped in. It does not
+            need to: the file index and every hash are already on disk, so the
+            chain runs again and walks straight past all of it. What a resume
+            costs is one more pass over the directory tree and the arithmetic
+            of grouping — minutes, against the hours the hashing took.
+          </p>
+          <p style="margin:0;max-width:var(--measure)">
+            A scan cut short by a restart of the service is parked the same
+            way. It used to be recorded as cancelled, which was true about the
+            process and wrong about the data. The offer comes back by name,
+            with the folder and how far it got, because a bare "Resume" is a
+            button nobody dares press.
+          </p>
+        </div>
       </div>
     </div>
   </div>

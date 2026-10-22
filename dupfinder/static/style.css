@@ -364,3 +364,11 @@ tr.folder-pair.kin td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .comparebar .hint { margin: 0; font-size: 11.5px; line-height: 1.45; opacity: .75; }
 #btnCompare.active { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 640px) { .cb-arrow { display: none; } }
+
+/* The offer to carry on a parked scan. Deliberately above the results and in
+   the accent colour: after a restart it is the only thing on screen that says
+   hours of hashing are still there, and a quiet line would be missed. */
+.resumebar { display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; border-color: var(--accent); }
+.resumebar .muted { display: block; margin-top: 4px; font-size: 12.5px; line-height: 1.45; }
+.resumebar-actions { display: flex; gap: 8px; flex-shrink: 0; }

@@ -211,6 +211,9 @@ class ScanEngine:
         # and matched; once it is caught out it is not asked again this scan.
         self._helper_trusted = True
         self._helper_proved = False
+        # Whether the interrupt now in flight is a pause or a stop. Set by
+        # whoever asks for it; read once, in the Cancelled branch.
+        self._paused = False
         self._status = {
             "state": "idle",
             "scan_id": None,
@@ -231,6 +234,7 @@ class ScanEngine:
             "started_at": None,
             "finished_at": None,
             "error": None,
+            "resumed": False,
             "cache_hits": 0,
             "reused_dirs": 0,
             "note": "",
@@ -285,6 +289,7 @@ class ScanEngine:
         scan_id = cur.lastrowid
 
         self._cancel.clear()
+        self._paused = False
         self._helper_trusted = True
         self._helper_proved = False
         with self._lock:
@@ -294,7 +299,7 @@ class ScanEngine:
                 files_seen=0, bytes_seen=0, files_hashed=0, bytes_hashed=0,
                 todo=0, done=0, groups_found=0, wasted_bytes=0,
                 started_at=time.time(), finished_at=None, error=None,
-                cache_hits=0, reused_dirs=0,
+                cache_hits=0, reused_dirs=0, resumed=False,
             )
         self._thread = threading.Thread(
             target=self._run, args=(scan_id, root, opts), daemon=True,
@@ -306,8 +311,90 @@ class ScanEngine:
     def cancel(self) -> bool:
         if not self.is_running():
             return False
+        self._paused = False
         self._cancel.set()
         return True
+
+    def pause(self) -> bool:
+        """Stop where we are, and mark the scan as resumable.
+
+        The same interrupt as cancel - the difference is only what the scan is
+        called afterwards, and therefore whether it is offered for resuming.
+        Everything a cancelled scan keeps, a paused one keeps too; the hashes
+        are in the cache either way.
+        """
+        if not self.is_running():
+            return False
+        self._paused = True
+        self._cancel.set()
+        return True
+
+    def resumable(self, scan_id=None):
+        """The paused scan, or None. Without an id: the most recent one."""
+        if scan_id is None:
+            return self.db.one(
+                "SELECT * FROM scans WHERE state='paused' ORDER BY id DESC LIMIT 1")
+        return self.db.one(
+            "SELECT * FROM scans WHERE id=? AND state='paused'", (scan_id,))
+
+    def resume(self, scan_id=None) -> int:
+        """Carry a paused scan on, in the same scan row.
+
+        It does not re-enter the phase it stopped in. It does not need to:
+        everything expensive is already on disk - the file index in `files`,
+        every hash in `hash_cache` - so running the chain again walks past all
+        of it. What a resume actually costs is one more pass over the
+        directory tree and the arithmetic of grouping, both minutes rather
+        than the hours the hashing took.
+
+        The derived rows are cleared first. Groups are inserted, not upserted,
+        so a second pass over the same scan would otherwise report every
+        duplicate twice. They are rebuilt within the same run, from data that
+        never left the database.
+        """
+        if self.is_running():
+            raise RuntimeError("A scan is already running")
+        row = self.resumable(scan_id)
+        if row is None:
+            raise ValueError("No paused scan to resume")
+
+        scan_id = row["id"]
+        root = row["root"]
+        try:
+            opts = json.loads(row["options"] or "{}")
+        except ValueError:
+            opts = {}
+        if not os.path.isdir(root):
+            raise ValueError("%s is no longer there" % root)
+
+        self.db.execute(
+            "DELETE FROM group_members WHERE group_id IN "
+            "(SELECT id FROM groups WHERE scan_id=?)", (scan_id,))
+        self.db.execute("DELETE FROM groups WHERE scan_id=?", (scan_id,))
+        self.db.execute("DELETE FROM suggestions WHERE scan_id=?", (scan_id,))
+        self.db.execute(
+            "UPDATE scans SET state='running', finished_at=NULL, error=NULL, "
+            "groups_found=0, wasted_bytes=0 WHERE id=?", (scan_id,))
+
+        self._cancel.clear()
+        self._paused = False
+        self._helper_trusted = True
+        self._helper_proved = False
+        with self._lock:
+            self._status.update(
+                state="running", scan_id=scan_id, root=root, phase="walk",
+                phase_label=PHASES[0][1], phase_index=1, current="",
+                files_seen=0, bytes_seen=0, files_hashed=0, bytes_hashed=0,
+                todo=0, done=0, groups_found=0, wasted_bytes=0,
+                started_at=time.time(), finished_at=None, error=None,
+                cache_hits=0, reused_dirs=0, resumed=True,
+            )
+        self._thread = threading.Thread(
+            target=self._run, args=(scan_id, root, opts), daemon=True,
+            name="dupfinder-scan",
+        )
+        self._thread.start()
+        return scan_id
 
     # -- internals -----------------------------------------------------
     def _set(self, **kw):
@@ -511,7 +598,7 @@ class ScanEngine:
             # batched write; one round-trip per group would have made cancel
             # take minutes.
             self._suggest(scan_id)
-            self._finish(scan_id, "cancelled")
+            self._finish(scan_id, "paused" if self._paused else "cancelled")
         except Exception as exc:  # noqa: BLE001 - surface anything to the UI
             msg = "%s: %s" % (type(exc).__name__, exc)
             self.db.execute(

@@ -136,6 +136,28 @@ the pool cannot start, and says so in the progress panel.
 (phase, current path, bytes hashed, cache reuse), can be **stopped at any
 moment** with partial results kept, and can be **run again**.
 
+**Pause, and carry on later — including after a restart.** *Pause* parks the
+scan instead of writing it off. A resume does not re-enter the phase it
+stopped in and does not need to: the file index is in `files` and every hash
+in `hash_cache`, both on disk, so the chain runs again and walks straight past
+all of it. What a resume actually costs is one more pass over the directory
+tree and the arithmetic of grouping — minutes, against the hours the hashing
+took.
+
+A scan interrupted by a service restart is parked the same way. It used to be
+recorded as *cancelled*, which was true about the process and wrong about the
+data: hours of hashing looked like a dead end. The interface offers it back by
+name, with its root and how far it got, because a bare "Resume" is a button
+nobody dares press. *Discard* withdraws only the offer — the files, hashes and
+groups stay exactly where a cancelled scan would leave them.
+
+The one thing a resume must get right is that groups are INSERTed, not
+upserted: running the chain twice over one scan would report every duplicate
+twice and nothing would complain. The derived rows are cleared first and
+rebuilt from data that never left the database. `tests/test_pause_resume.py`
+compares a resumed scan against an uninterrupted one over the same tree — with
+the clearing removed it finds 588 groups where there are 400.
+
 **A re-run only pays for what changed.** Hashes *and* byte-comparison results
 are cached on path + size + mtime, so an unchanged tree is answered from the
 database. Measured on 20,000 files: **148 s** cold, **4 s** warm. Edit one file

@@ -37,6 +37,9 @@ jobs:
       - name: One tree compared against another
         run: python3 tests/test_compare_trees.py
 
+      - name: Pausing a scan and carrying it on
+        run: python3 tests/test_pause_resume.py
+
       - name: A real scan, start to finish
         # The only test here that runs the whole chain. Adding a column once
         # widened an INSERT and left two other passes writing the old row;
