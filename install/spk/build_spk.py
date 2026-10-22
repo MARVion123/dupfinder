@@ -61,7 +61,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 PKG_NAME = "dupfinder"
-BUILD_NUMBER = "0023"
+BUILD_NUMBER = "0024"
 
 # Where Package Center's Help and publisher links point.
 HOMEPAGE = "https://marvion123.github.io/dupfinder/"
@@ -83,10 +83,24 @@ UI_ICON_SIZES = (16, 24, 32, 48, 64, 72, 256)
 # --- INFO ------------------------------------------------------------------
 
 def read_version() -> str:
-    ns: dict = {}
-    with open(os.path.join(REPO, PKG_NAME, "__init__.py"), "r", encoding="utf-8") as fh:
-        exec(fh.read(), ns)          # noqa: S102 - trivial, our own file
-    return ns["__version__"]
+    """__version__, read out of the file rather than executed.
+
+    This used to exec the module into an empty namespace. That works right up
+    until the module contains an import - and then it fails with a KeyError
+    about __name__, which says nothing about the actual problem. Parsing the
+    assignment cannot be broken by anything added to the file later.
+    """
+    import ast
+
+    path = os.path.join(REPO, PKG_NAME, "__init__.py")
+    with open(path, "r", encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename=path)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "__version__"
+                for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise SystemExit("no __version__ in %s" % path)
 
 
 def build_info(version: str, checksum: str) -> str:
@@ -164,6 +178,15 @@ def build_payload(tmp: str) -> tuple[str, str]:
     shutil.copytree(
         os.path.join(REPO, PKG_NAME), os.path.join(stage, PKG_NAME),
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+
+    # Stamp the build number into the payload. Without it the service can
+    # report its version but not which build of it is running, and that is
+    # the one thing anyone wants to know after an install.
+    stamp = '"""Written by build_spk.py. Absent in a checkout."""'
+    stamp += "\n\nBUILD = \"%s\"\n" % BUILD_NUMBER
+    with open(os.path.join(stage, PKG_NAME, "_build.py"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        fh.write(stamp)
 
     # The licence has to travel with the software. PolyForm's Notices clause
     # obliges anyone handing on any part of it to hand on the terms - or their

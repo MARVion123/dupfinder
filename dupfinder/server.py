@@ -15,7 +15,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, hashing
+from . import __release__, __version__, hashing
 from .actions import ActionRunner
 from .ai import AIEngine, heuristic_suggestions
 from .db import Database
@@ -230,7 +230,7 @@ class App:
                 "files_seen": parked["files_seen"],
             }
         return {
-            "version": __version__,
+            "version": __release__,
             "uptime": round(time.time() - self.started_at, 1),
             "resumable": resumable,
             "scan": self.scanner.status(),

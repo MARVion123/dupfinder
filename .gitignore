@@ -15,3 +15,4 @@ tests/ui/package-lock.json
 *.db-shm
 config.json
 .dupfinder-trash/
+_build.py

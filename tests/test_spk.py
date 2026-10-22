@@ -160,6 +160,8 @@ def main() -> int:
             members = set(inner.getnames())
             shortcut = json.loads(inner.extractfile("ui/config").read().decode("utf-8"))
             firewall = inner.extractfile("ui/dupfinder.sc").read().decode("utf-8")
+            stamp = (inner.extractfile("dupfinder/_build.py").read().decode("utf-8")
+                     if "dupfinder/_build.py" in members else "")
         check("application is present", "dupfinder/__main__.py" in members)
         check("static files are present", "dupfinder/static/app.js" in members)
         check("the licence travels with the software", "LICENSE" in members,
@@ -169,6 +171,18 @@ def main() -> int:
             check("icon %d px" % size, "ui/images/dupfinder-%d.png" % size in members)
 
         print("\ncross-file agreement")
+        # Without this the running service can only say "1.0.0", and which
+        # build is on the box takes a shell and synopkg to find out. That
+        # cost a round of installing the wrong package without noticing.
+        check("the build number travels in the payload",
+              "dupfinder/_build.py" in members)
+        check("and it is the build that was just made",
+              'BUILD = "%s"' % build_spk.BUILD_NUMBER in stamp,
+              stamp.strip().replace(chr(10), " | ") or "(absent)")
+        check("the stamp agrees with INFO",
+              fields.get("version", "").endswith("-" + build_spk.BUILD_NUMBER),
+              "INFO says %s" % fields.get("version"))
+
         check("shortcut id matches dsmappname",
               fields["dsmappname"] in shortcut[".url"],
               "INFO says %s, ui/config defines %s"
