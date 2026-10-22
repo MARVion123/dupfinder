@@ -183,6 +183,13 @@ def main() -> int:
               str(row["error"]))
         check("the status offers it", app.api_status()["resumable"] is not None)
 
+        print("\na paused scan is still the one the results show")
+        # It used to fall out of this query, so pausing made the table quietly
+        # show an older scan while the work sat there untouched.
+        check("the latest-scan lookup finds it",
+              app._latest_scan_id({}) == second,
+              "%s vs %s" % (app._latest_scan_id({}), second))
+
         print("\ndiscarding withdraws the offer and keeps the data")
         before = db.one("SELECT COUNT(*) AS n FROM files WHERE scan_id=?",
                         (second,))["n"]

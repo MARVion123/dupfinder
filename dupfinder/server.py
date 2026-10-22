@@ -703,8 +703,11 @@ class App:
         live = self.scanner.status().get("scan_id")
         if live:
             return live
+        # A paused scan belongs here too. Without it, pausing made the results
+        # view fall back to an older scan - the work was still there, and the
+        # table quietly showed somebody else's.
         row = self.db.one(
-            "SELECT id FROM scans WHERE state IN ('done','cancelled') "
+            "SELECT id FROM scans WHERE state IN ('done','cancelled','paused') "
             "ORDER BY id DESC LIMIT 1")
         return row["id"] if row else None
 

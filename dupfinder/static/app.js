@@ -167,7 +167,8 @@
       sub.textContent = "No scan yet";
     } else {
       var word = { running: "Scanning", done: "Finished", cancelled: "Stopped",
-                   error: "Failed", idle: "Ready" }[scan.state] || scan.state;
+                   paused: "Paused", error: "Failed", idle: "Ready" }[scan.state]
+                 || scan.state;
       sub.textContent = word + " · " + (scan.root || "") +
         (scan.state !== "running" && scan.elapsed ? " · " + fmtDuration(scan.elapsed) : "");
     }
@@ -178,7 +179,9 @@
       state.offset = 0;
       loadScans();
       loadGroups();
-      toast(scan.state === "cancelled"
+      toast(scan.state === "paused"
+        ? "Paused — carry on whenever you like, the hashes are kept."
+        : scan.state === "cancelled"
         ? "Scan stopped — partial results kept."
         : "Scan finished.");
     }
