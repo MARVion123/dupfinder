@@ -91,12 +91,19 @@ averaged rather than taking the best one: a single matching still is a
 coincidence, three at the same points of the running time are the same film.
 Video gets this *and* CTPH, because they answer different questions — CTPH
 recognises a remux, frames recognise a re-encode, and neither sees what the
-other sees. Either tool missing turns the feature off rather than
-failing, and the scan says so in its progress line while the settings
-panel names the piece that is absent. Both halves of that matter: DSM
-ships a stripped `/bin/ffmpeg` with no `ffprobe` beside it, and a video
-pass that quietly does nothing looks exactly like a library with no
-re-encodes in it.
+other sees.
+
+Which ffmpeg gets used is decided by what it can do, not by where it is.
+Package directories are searched before `PATH`, and each candidate is asked
+whether it can write a PNG to a pipe before it is accepted. On DSM that is
+the whole ball game: Synology's own `/bin/ffmpeg` sits on `PATH` with no
+`image2pipe` muxer compiled in, so every frame grab returns nothing, while
+the complete SynoCommunity build lies in `/var/packages/ffmpeg/target/bin`
+and used to be passed over. Anything missing or unusable turns the feature
+off rather than failing, the scan says so in its progress line, and the
+settings panel names the piece - including the build it turned down and
+why. A video pass that quietly does nothing is indistinguishable from a
+library that holds no re-encodes, and the two call for opposite reactions.
 
 **Another machine can take the slow pass** — *Settings → Use another machine
 when one offers*, off by default. A desktop is about forty times faster at the

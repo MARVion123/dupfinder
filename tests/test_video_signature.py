@@ -121,5 +121,97 @@ try:
 finally:
     hashing._FFMPEG_CHECKED, hashing._FFMPEG, hashing._FFPROBE = saved
 
+# The second half of the same 67 hours. ffprobe was found, Pillow was there,
+# the gate said yes - and every frame grab still came back empty, because the
+# ffmpeg it picked was Synology's own build, which has no image2pipe muxer
+# compiled in. The full build was sitting two directories away the whole time
+# and was never reached, because PATH was asked first.
+print("")
+print("the ffmpeg that can do the job is the one that gets picked")
+dsm = "/bin/ffmpeg"                                  # stripped: no image2pipe
+syno = "/var/packages/ffmpeg/target/bin/ffmpeg"      # the full build
+
+pick, rejected = hashing._pick_ffmpeg([dsm, syno], lambda p: p != dsm)
+check("a build that cannot pipe PNG is passed over", pick == syno, str(pick))
+check("and it is remembered, not forgotten", rejected == [dsm], str(rejected))
+
+pick, rejected = hashing._pick_ffmpeg([syno, dsm], lambda p: p != dsm)
+check("a capable first candidate is taken as it stands", pick == syno, str(pick))
+check("and nothing is probed past it", rejected == [], str(rejected))
+
+pick, rejected = hashing._pick_ffmpeg([dsm], lambda p: False)
+check("nothing usable gives no answer at all", pick is None, str(pick))
+check("and every candidate is listed", rejected == [dsm], str(rejected))
+
+print("")
+print("the package directories are searched before PATH")
+import tempfile, shutil as _sh
+tmp = tempfile.mkdtemp(prefix="ffmpeg-order-")
+try:
+    paket = os.path.join(tmp, "paket")
+    pfad = os.path.join(tmp, "pfad")
+    os.makedirs(paket)
+    os.makedirs(pfad)
+    for folder in (paket, pfad):
+        target = os.path.join(folder, "ffmpeg")
+        with open(target, "w") as fh:
+            fh.write("#!/bin/sh" + chr(10) + "exit 0" + chr(10))
+        os.chmod(target, 0o755)
+
+    saved_hints = hashing._FFMPEG_HINTS
+    saved_which = _sh.which
+    try:
+        hashing._FFMPEG_HINTS = (paket,)
+        _sh.which = lambda name: os.path.join(pfad, name)
+        found = hashing._tool_candidates("ffmpeg")
+        check("the package copy comes first",
+              found and found[0] == os.path.join(paket, "ffmpeg"), str(found))
+        check("the PATH copy is kept as a fallback",
+              os.path.join(pfad, "ffmpeg") in found, str(found))
+        check("and neither is listed twice", len(found) == len(set(found)),
+              str(found))
+
+        # The DSM case exactly: PATH and a package directory holding the
+        # same file. It must be offered once, not twice.
+        _sh.which = lambda name: os.path.join(paket, name)
+        found = hashing._tool_candidates("ffmpeg")
+        check("one file in both places is one candidate", len(found) == 1,
+              str(found))
+
+        # And the lookup must actually *apply* the probe. Testing _pick_ffmpeg
+        # on its own leaves room for a _locate_tools that takes the first
+        # candidate and never asks - which is the bug, restored.
+        untauglich = os.path.join(paket, "ffmpeg")
+        tauglich = os.path.join(pfad, "ffmpeg")
+        hashing._FFMPEG_HINTS = (paket, pfad)
+        _sh.which = lambda name: None
+        saved_probe = hashing._can_pipe_png
+        saved_state = (hashing._FFMPEG_CHECKED, hashing._FFMPEG,
+                       hashing._FFPROBE, hashing._FFMPEG_REJECTED)
+        try:
+            hashing._can_pipe_png = lambda path: path != untauglich
+            hashing._FFMPEG_CHECKED = False
+            hashing._FFMPEG = hashing._FFPROBE = None
+            ffmpeg, _ = hashing._locate_tools()
+            check("the lookup itself skips the build that cannot do the job",
+                  ffmpeg == tauglich, str(ffmpeg))
+            check("and the report says which one it turned down",
+                  hashing._FFMPEG_REJECTED == [untauglich],
+                  str(hashing._FFMPEG_REJECTED))
+            bericht = hashing.video_support()
+            check("the missing-piece text names the build, not 'ffmpeg'",
+                  all("image2pipe" in m or "ffmpeg" not in m
+                      for m in bericht["missing"]) or bericht["ok"],
+                  str(bericht["missing"]))
+        finally:
+            hashing._can_pipe_png = saved_probe
+            (hashing._FFMPEG_CHECKED, hashing._FFMPEG,
+             hashing._FFPROBE, hashing._FFMPEG_REJECTED) = saved_state
+    finally:
+        hashing._FFMPEG_HINTS = saved_hints
+        _sh.which = saved_which
+finally:
+    _sh.rmtree(tmp, ignore_errors=True)
+
 print()
 sys.exit(1 if fails else 0)

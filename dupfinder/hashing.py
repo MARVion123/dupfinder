@@ -492,6 +492,8 @@ VIDEO_SIG_PREFIX = "v1"
 _FFMPEG_CHECKED = False
 _FFMPEG = None
 _FFPROBE = None
+# ffmpeg builds found but turned down, and why - see _can_pipe_png.
+_FFMPEG_REJECTED = []
 
 # DSM keeps its copies inside packages rather than on PATH.
 _FFMPEG_HINTS = (
@@ -505,23 +507,77 @@ _FFMPEG_HINTS = (
 
 
 def _find_tool(name):
+    """The first of these this machine has. Kept for callers that want a path."""
+    candidates = _tool_candidates(name)
+    return candidates[0] if candidates else None
+
+
+def _tool_candidates(name):
+    """Every copy of this tool on the machine, the package builds first.
+
+    PATH comes last on purpose, and that reverses the old order. On DSM the
+    PATH entry is Synology's own stripped build, while the full one sits in a
+    package directory - so asking PATH first found the weaker tool and never
+    looked at the better one lying beside it.
+    """
     import shutil as _shutil
 
-    found = _shutil.which(name)
-    if found:
-        return found
+    seen, out = set(), []
     for folder in _FFMPEG_HINTS:
         candidate = os.path.join(folder, name)
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return None
+        if (candidate not in seen and os.path.isfile(candidate)
+                and os.access(candidate, os.X_OK)):
+            seen.add(candidate)
+            out.append(candidate)
+    found = _shutil.which(name)
+    if found and found not in seen:
+        out.append(found)
+    return out
+
+
+def _can_pipe_png(ffmpeg) -> bool:
+    """Whether this build can write a PNG to a pipe, which is all we ask of it.
+
+    Order alone is a guess about which build is better. This is the question
+    itself: `video_dhash` pipes single frames out as PNG, and Synology's
+    ffmpeg has no image2pipe muxer compiled in at all - it answers
+    "Requested output format 'image2pipe' is not a suitable output format"
+    and writes nothing. A build that cannot list its own muxers is not one to
+    rely on either, so a failed listing counts as a no.
+    """
+    import subprocess
+
+    try:
+        muxers = subprocess.run([ffmpeg, "-hide_banner", "-muxers"],
+                                capture_output=True, timeout=30, check=False)
+        encoders = subprocess.run([ffmpeg, "-hide_banner", "-encoders"],
+                                  capture_output=True, timeout=30, check=False)
+    except Exception:                                   # noqa: BLE001
+        return False
+    return (b"image2pipe" in muxers.stdout
+            and b" png " in encoders.stdout.replace(b"	", b" "))
+
+
+def _pick_ffmpeg(candidates, probe):
+    """(the first candidate that passes, the ones that did not).
+
+    Split out from the lookup so the choice can be tested without needing two
+    differently-crippled ffmpeg builds on the machine running the tests.
+    """
+    rejected = []
+    for candidate in candidates:
+        if probe(candidate):
+            return candidate, rejected
+        rejected.append(candidate)
+    return None, rejected
 
 
 def _locate_tools():
-    global _FFMPEG_CHECKED, _FFMPEG, _FFPROBE
+    global _FFMPEG_CHECKED, _FFMPEG, _FFPROBE, _FFMPEG_REJECTED
     if not _FFMPEG_CHECKED:
         _FFMPEG_CHECKED = True
-        _FFMPEG = _find_tool("ffmpeg")
+        _FFMPEG, _FFMPEG_REJECTED = _pick_ffmpeg(
+            _tool_candidates("ffmpeg"), _can_pipe_png)
         _FFPROBE = _find_tool("ffprobe")
     return _FFMPEG, _FFPROBE
 
@@ -551,7 +607,13 @@ def video_support():
     ffmpeg, ffprobe = _locate_tools()
     missing = []
     if not ffmpeg:
-        missing.append("ffmpeg")
+        # Saying "ffmpeg" when there is an ffmpeg right there sends people
+        # off to install one they already have.
+        if _FFMPEG_REJECTED:
+            missing.append("a usable ffmpeg (no image2pipe muxer in %s)"
+                           % ", ".join(_FFMPEG_REJECTED))
+        else:
+            missing.append("ffmpeg")
     if not ffprobe:
         missing.append("ffprobe")
     if not pillow_available():
@@ -560,6 +622,7 @@ def video_support():
         "ok": not missing,
         "ffmpeg": ffmpeg or "",
         "ffprobe": ffprobe or "",
+        "rejected": list(_FFMPEG_REJECTED),
         "pillow": pillow_available(),
         "missing": missing,
     }
