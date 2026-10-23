@@ -1227,11 +1227,19 @@ class ScanEngine:
                     pool.shutdown(wait=False, cancel_futures=True)
                 except TypeError:
                     pool.shutdown(wait=False)   # cancel_futures is 3.9+
-        if updates:
-            self.db.executemany(
-                "UPDATE files SET fuzzy=?, dhash=?, "
-                "taken_at=COALESCE(?, taken_at) WHERE id=?", updates)
-        self.db.cache_put_many(cached_rows)
+            # Keep what was already computed, including when this pass is
+            # being torn down by a pause. The flush used to sit after the
+            # try, so a pause threw away the batch in progress - up to 399
+            # signatures that had already been paid for. For a video that is
+            # three ffmpeg seeks each, and a resume computed them all again.
+            try:
+                if updates:
+                    self.db.executemany(
+                        "UPDATE files SET fuzzy=?, dhash=?, "
+                        "taken_at=COALESCE(?, taken_at) WHERE id=?", updates)
+                self.db.cache_put_many(cached_rows)
+            except Exception:       # noqa: BLE001 - must not mask the real error
+                pass
 
         pairs = {}
         self._compare_fuzzy_buckets(info, threshold, pairs)

@@ -279,6 +279,63 @@ def main() -> int:
               app5.scanner.status()["state"] != "running"
               and app5.scanner.resumable(s3) is not None)
 
+        # ---- a pause keeps what it already paid for ---------------------
+        print("")
+        print("a pause keeps the hashes already computed")
+        # The flush used to sit after the try/finally, so the batch in
+        # progress was discarded on the way out - up to 399 signatures that
+        # had already been computed. For video that is three ffmpeg seeks
+        # each, recomputed from scratch on the resume.
+        from dupfinder import scanner as scanner_mod
+        from dupfinder.scanner import Cancelled
+
+        _, db4, eng4 = engine_for(tmp, "partial")
+        tree4 = os.path.join(tmp, "tree4")
+        os.makedirs(tree4)
+        for i in range(12):
+            with open(os.path.join(tree4, "f%02d.bin" % i), "wb") as fh:
+                fh.write(os.urandom(300_000))   # distinct, so each wants CTPH
+        s4 = eng4.start(tree4)
+        wait_idle(eng4)
+
+        # Start the pass from nothing, so every candidate has to be hashed.
+        db4.execute("DELETE FROM hash_cache")
+        db4.execute("UPDATE files SET fuzzy=NULL WHERE scan_id=?", (s4,))
+
+        # Small chunks and a cancel on the second one: exactly one chunk is
+        # computed, and it is far short of BATCH, so nothing flushes inside
+        # the loop and only the final flush can save it.
+        saved_chunk = scanner_mod.FUZZY_CHUNK
+        saved_abort = eng4._abort_if_cancelled
+        calls = {"n": 0}
+
+        def abort_on_second():
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise Cancelled()
+
+        scanner_mod.FUZZY_CHUNK = 4
+        eng4._abort_if_cancelled = abort_on_second
+        try:
+            eng4._fuzzy_pass(s4, [], {"near_threshold": 70,
+                                      "image_similarity": False})
+            kept = -1
+        except Cancelled:
+            kept = db4.one("SELECT COUNT(*) AS n FROM hash_cache "
+                           "WHERE fuzzy IS NOT NULL")["n"]
+        finally:
+            scanner_mod.FUZZY_CHUNK = saved_chunk
+            eng4._abort_if_cancelled = saved_abort
+
+        check("the pass was actually interrupted", kept >= 0,
+              "it ran to the end instead")
+        check("and the part-finished batch reached the cache", kept > 0,
+              "%d signature(s) survived" % kept)
+        on_files = db4.one("SELECT COUNT(*) AS n FROM files "
+                           "WHERE scan_id=? AND fuzzy IS NOT NULL", (s4,))["n"]
+        check("the files carry the same signatures", on_files == kept,
+              "%d on files, %d in cache" % (on_files, kept))
+
         print("\nand the obvious refusals")
         check("resuming when there is nothing parked fails clearly",
               not_ok(lambda: app.scanner.resume(), ValueError))

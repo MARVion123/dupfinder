@@ -156,6 +156,14 @@ all of it. What a resume actually costs is one more pass over the directory
 tree and the arithmetic of grouping — minutes, against the hours the hashing
 took.
 
+Hashes reach the disk as they are computed, in batches of 400, and the
+database runs in WAL mode — so a pause, a cancel or a power cut keeps
+everything up to that point, and the batch in progress is written out on the
+way down rather than discarded. That last part was wrong until build 0025:
+the final flush sat outside the `try/finally`, so a pause threw away up to
+399 signatures that had already been paid for. For video, each of those is
+three ffmpeg seeks.
+
 **A restart on a schedule is the case this was built for.** A NAS that
 reboots every Sunday night would otherwise need a trip to the browser every
 Monday, and a scan needing longer than the gap between reboots would never

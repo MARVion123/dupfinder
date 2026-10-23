@@ -858,7 +858,9 @@
             need to: the file index and every hash are already on disk, so the
             chain runs again and walks straight past all of it. What a resume
             costs is one more pass over the directory tree and the arithmetic
-            of grouping — minutes, against the hours the hashing took.
+            of grouping — minutes, against the hours the hashing took. Hashes reach the disk as they are computed, in batches, so a
+            pause, a cancel or a power cut keeps everything up to that point —
+            the batch in progress included.
           </p>
           <p style="margin:0;max-width:var(--measure)">
             A scan cut short by a restart of the service is parked the same
