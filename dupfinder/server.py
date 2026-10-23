@@ -461,7 +461,9 @@ class App:
         sort = (query.get("sort") or ["wasted"])[0]
         column = SORT_COLUMNS.get(sort, SORT_COLUMNS["wasted"])
         direction = "ASC" if (query.get("dir") or ["desc"])[0].lower() == "asc" else "DESC"
-        limit = min(int((query.get("limit") or ["100"])[0] or 100), 500)
+        # The cap is a guard against a hand-made URL asking for every
+        # group at once, not a view setting; the picker offers less.
+        limit = min(int((query.get("limit") or ["100"])[0] or 100), 1000)
         offset = max(int((query.get("offset") or ["0"])[0] or 0), 0)
 
         clause = " AND ".join(where)

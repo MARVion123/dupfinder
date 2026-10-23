@@ -212,7 +212,16 @@ stare at an empty table while it works. The UI refreshes every three seconds.
 
 **Sortable results.** Every column sorts (similarity, copies, file size,
 reclaimable bytes, folders spanned, suggestion confidence), with filters for
-type, minimum similarity, minimum file size, and a path search.
+type, minimum similarity, minimum file size, and a path search. The sorted
+column is coloured and underlined rather than only carrying a small arrow,
+because on a list of duplicate *pairs* the reclaimable space equals the file
+size — so sorting by one gives the identical order as the other, and without
+a visible mark the click reads as ignored.
+
+**How many rows a page holds** is a picker next to the pager: 25 to 1000,
+remembered per browser. A laptop and a 4K monitor want different answers, and
+neither wants to set it again tomorrow. It is deliberately not a server
+setting — it says nothing about the scan.
 
 **One tree against another.** Grouping ignores folder structure already -
 groups come from content, and paths play no part in forming them. What the

@@ -135,8 +135,27 @@ table.grid th {
 }
 table.grid th.sortable { cursor: pointer; user-select: none; }
 table.grid th.sortable:hover { color: var(--ink); }
-table.grid th.sorted::after { content: " ▾"; color: var(--accent); }
+/* A small arrow after the label was the only sign a click had landed, and on
+   a list of duplicate pairs sorting by file size and by reclaimable space
+   give the identical order - so the arrow moved, nothing else did, and the
+   click read as ignored. The sorted column now carries the accent colour and
+   a line under its heading, which says "this is the column you are sorted by"
+   even when the order does not change. */
+table.grid th.sortable::after {
+  content: " ▾"; color: transparent; transition: color .12s;
+}
+table.grid th.sortable:hover::after { color: var(--muted); }
+table.grid th.sorted {
+  color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent);
+}
+table.grid th.sorted::after { color: var(--accent); }
 table.grid th.sorted.asc::after { content: " ▴"; }
+
+.pager label.pagesize {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: 10px; color: var(--muted); font-size: 12px;
+}
+.pager label.pagesize select { padding: 3px 6px; }
 table.grid th.num, table.grid td.num { text-align: right; }
 table.grid td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .col-check { width: 36px; }

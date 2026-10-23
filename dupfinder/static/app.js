@@ -2,12 +2,26 @@
 (function () {
   "use strict";
 
+  // How many rows a page holds. Remembered per browser, because it is a
+  // preference about this screen rather than about the scan - somebody on a
+  // laptop and somebody on a 4K monitor want different answers, and neither
+  // wants to set it again tomorrow.
+  var PAGE_SIZES = [25, 50, 100, 250, 500, 1000];
+
+  function storedPageSize() {
+    var raw = 0;
+    try {
+      raw = parseInt(localStorage.getItem("dupfinder_page_size"), 10);
+    } catch (e) { /* private window, blocked storage - the default is fine */ }
+    return PAGE_SIZES.indexOf(raw) >= 0 ? raw : 100;
+  }
+
   var state = {
     scanId: null,
     sort: "wasted",
     dir: "desc",
     offset: 0,
-    limit: 100,
+    limit: storedPageSize(),
     total: 0,
     groups: [],
     open: {},                 // group id -> true
@@ -583,6 +597,22 @@
     });
     $("btnNext").addEventListener("click", function () {
       state.offset += state.limit; loadGroups();
+    });
+
+    $("pageSize").value = String(state.limit);
+    $("pageSize").addEventListener("change", function () {
+      var want = parseInt(this.value, 10);
+      if (PAGE_SIZES.indexOf(want) < 0) return;
+      // Keep the row at the top of the screen on screen. Jumping back to
+      // the first page every time somebody widens the view throws away
+      // where they were, and with 45,000 groups that is a long way back.
+      var first = state.offset;
+      state.limit = want;
+      state.offset = Math.floor(first / want) * want;
+      try {
+        localStorage.setItem("dupfinder_page_size", String(want));
+      } catch (e) { /* nothing to remember it with; the session still works */ }
+      loadGroups();
     });
 
     $("btnClearSel").addEventListener("click", function () {

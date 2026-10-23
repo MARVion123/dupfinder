@@ -228,6 +228,82 @@ async function run() {
     });
     step("table header does not overlap the first row", layout.overlap <= 0,
       `${layout.overlap}px overlap`);
+
+    // --- Sorting and page size ------------------------------------------
+    // Sorting was implemented and looked broken: on a list of duplicate
+    // *pairs* the reclaimable space equals the file size, so the default
+    // sort and the file-size sort give the identical order. The click
+    // landed and nothing moved. Direction is what proves it works.
+    const sizeCells = () => page.evaluate(() =>
+      [...document.querySelectorAll("tr.group-row")].map(
+        (tr) => tr.cells[4].textContent.trim()));
+
+    await page.click('th[data-sort="largest"]');
+    await page.waitForTimeout(400);
+    const descOrder = await sizeCells();
+    await page.click('th[data-sort="largest"]');
+    await page.waitForTimeout(400);
+    const ascOrder = await sizeCells();
+
+    step("clicking a header sorts by that column",
+      descOrder.length > 1 && JSON.stringify(ascOrder) ===
+        JSON.stringify([...descOrder].reverse()),
+      `${JSON.stringify(descOrder)} -> ${JSON.stringify(ascOrder)}`);
+    step("the sorted column is marked, so a click that changes no order still shows",
+      await page.evaluate(() =>
+        document.querySelector('th[data-sort="largest"]').classList.contains("sorted")));
+    step("and the direction is marked too",
+      await page.evaluate(() =>
+        document.querySelector('th[data-sort="largest"]').classList.contains("asc")));
+
+    const otherSorted = await page.evaluate(() =>
+      document.querySelectorAll("th.sorted").length);
+    step("only one column is marked at a time", otherSorted === 1,
+      `${otherSorted} marked`);
+
+    // The class alone was never the problem - it was applied before this
+    // change too, and produced an arrow nobody saw. What matters is that
+    // the marked column actually looks different from its neighbours.
+    // Move the pointer away first. After page.click the cursor is still on
+    // that header, and th.sortable:hover changes the colour - so measuring
+    // here without this compares hover against not-hover and passes even
+    // with the sorted styling deleted. It did.
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(150);
+    const marking = await page.evaluate(() => {
+      const on = document.querySelector("th.sorted");
+      const off = document.querySelector("th.sortable:not(.sorted)");
+      const a = getComputedStyle(on), b = getComputedStyle(off);
+      return { colour: a.color !== b.color, underline: a.boxShadow !== b.boxShadow };
+    });
+    step("and it is visibly different, not just classed",
+      marking.colour || marking.underline,
+      `colour differs: ${marking.colour}, underline differs: ${marking.underline}`);
+
+    // Page size: 100 rows was fixed, with no way to ask for more or less.
+    step("the page size picker is there",
+      await page.locator("#pageSize").count() === 1);
+    step("and starts at the default",
+      (await page.locator("#pageSize").inputValue()) === "100");
+
+    await page.selectOption("#pageSize", "25");
+    await page.waitForTimeout(400);
+    const askedFor = await page.evaluate(async () => {
+      // No scan_id: the server resolves the latest scan itself.
+      const r = await fetch("/api/groups?limit=25");
+      return (await r.json()).limit;
+    });
+    step("the server honours the chosen page size", askedFor === 25, String(askedFor));
+
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector("tr.group-row");
+    step("the choice survives a reload",
+      (await page.locator("#pageSize").inputValue()) === "25",
+      await page.locator("#pageSize").inputValue());
+
+    // Put it back, so later steps see the whole fixture on one page.
+    await page.selectOption("#pageSize", "100");
+    await page.waitForTimeout(400);
     await shot("04-results");
 
     // 4. Sorting and filtering ------------------------------------------
