@@ -127,6 +127,36 @@ finally:
 # compiled in. The full build was sitting two directories away the whole time
 # and was never reached, because PATH was asked first.
 print("")
+print("video_probe does its own looking up")
+# It used to read a module global that only ffmpeg_available() ever filled
+# in. Call video_probe first - as _fuzzy_job does, before video_dhash - and
+# in a fresh interpreter it answered "duration 0.0", which makes video_dhash
+# give up because it has nowhere to seek. In a scan the order happens to
+# work out. Depending on that is not a design, and the wrong answer looked
+# exactly like a fact about the file.
+saved_state = (hashing._FFMPEG_CHECKED, hashing._FFMPEG, hashing._FFPROBE)
+try:
+    hashing._FFMPEG_CHECKED = False
+    hashing._FFMPEG = hashing._FFPROBE = None
+    seen = {"n": 0}
+    real = hashing._locate_tools
+
+    def counting():
+        seen["n"] += 1
+        return real()
+
+    hashing._locate_tools = counting
+    try:
+        hashing.video_probe(__file__)
+    finally:
+        hashing._locate_tools = real
+    check("it looks the tools up itself, uncalled", seen["n"] == 1,
+          "%d lookups" % seen["n"])
+finally:
+    (hashing._FFMPEG_CHECKED, hashing._FFMPEG,
+     hashing._FFPROBE) = saved_state
+
+print("")
 print("the ffmpeg that can do the job is the one that gets picked")
 dsm = "/bin/ffmpeg"                                  # stripped: no image2pipe
 syno = "/var/packages/ffmpeg/target/bin/ffmpeg"      # the full build

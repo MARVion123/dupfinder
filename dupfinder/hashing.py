@@ -636,13 +636,21 @@ def video_probe(path: str):
     are worth - at twenty thousand videos that is twenty thousand avoidable
     process starts.
     """
-    if not _FFPROBE:
+    # Look the tools up here rather than trusting a caller to have done it.
+    # This read a module global that only ffmpeg_available() ever filled in,
+    # so calling video_probe first returned a duration of zero - and a zero
+    # duration makes video_dhash give up, because it cannot know where to
+    # seek. In a scan the order happens to work out; depending on that is
+    # not a design, and it hid behind an answer that looked like a fact
+    # about the file.
+    _, ffprobe = _locate_tools()
+    if not ffprobe:
         return 0.0, None
     import subprocess
 
     try:
         out = subprocess.run(
-            [_FFPROBE, "-v", "error", "-show_entries",
+            [ffprobe, "-v", "error", "-show_entries",
              "format=duration:format_tags=creation_time",
              "-of", "default=nw=1:nk=1", path],
             capture_output=True, timeout=30, check=False)
