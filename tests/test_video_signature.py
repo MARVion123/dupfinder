@@ -127,6 +127,74 @@ finally:
 # compiled in. The full build was sitting two directories away the whole time
 # and was never reached, because PATH was asked first.
 print("")
+print("neither tool is allowed to take the whole machine")
+# ffmpeg defaults to one thread per core. Three worker processes each
+# starting one, on a four-core NAS, is twelve decode threads competing for
+# four cores - to produce three single frames. The NAS was at load 8.7
+# while also transcoding and running an antivirus sweep, and this was the
+# part of that which was ours.
+calls = []
+saved_state = (hashing._FFMPEG_CHECKED, hashing._FFMPEG, hashing._FFPROBE)
+import subprocess as _sp
+real_run = _sp.run
+
+
+# A real 9x8 PNG, because an empty stdout makes video_dhash give up after
+# the first frame - correctly - and then the test would only ever see one
+# ffmpeg call and could not say anything about the other two.
+_buf = io.BytesIO()
+Image.new("L", (9, 8), 128).save(_buf, "PNG")
+_PNG = _buf.getvalue()
+
+
+class _Done:
+    returncode = 0
+    stdout = _PNG
+    stderr = b""
+
+
+class _Duration:
+    returncode = 0
+    stdout = b"300.0" + bytes([10])
+    stderr = b""
+
+
+def capture(cmd, *a, **kw):
+    calls.append(list(cmd))
+    return _Duration() if cmd[0].endswith("ffprobe") else _Done()
+
+
+try:
+    hashing._FFMPEG_CHECKED = True
+    hashing._FFMPEG, hashing._FFPROBE = "/x/ffmpeg", "/x/ffprobe"
+    _sp.run = capture
+    hashing.video_probe("/some/film.mp4")
+    hashing.video_dhash("/some/film.mp4", 300.0)
+finally:
+    _sp.run = real_run
+    (hashing._FFMPEG_CHECKED, hashing._FFMPEG,
+     hashing._FFPROBE) = saved_state
+
+
+def capped(argv):
+    return "-threads" in argv and argv[argv.index("-threads") + 1] == "1"
+
+
+probe_calls = [c for c in calls if c and c[0].endswith("ffprobe")]
+frame_calls = [c for c in calls if c and c[0].endswith("ffmpeg")]
+check("ffprobe was called", len(probe_calls) == 1, str(len(probe_calls)))
+check("and holds itself to one thread",
+      all(capped(c) for c in probe_calls),
+      str(probe_calls[:1]))
+check("one ffmpeg per frame", len(frame_calls) == len(hashing.VIDEO_FRAMES),
+      "%d calls for %d frames" % (len(frame_calls), len(hashing.VIDEO_FRAMES)))
+check("each holds itself to one thread",
+      frame_calls and all(capped(c) for c in frame_calls),
+      str(frame_calls[:1]))
+check("and the scaling filter too",
+      frame_calls and all("-filter_threads" in c for c in frame_calls))
+
+print("")
 print("video_probe does its own looking up")
 # It used to read a module global that only ffmpeg_available() ever filled
 # in. Call video_probe first - as _fuzzy_job does, before video_dhash - and

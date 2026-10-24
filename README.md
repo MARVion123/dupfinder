@@ -93,6 +93,14 @@ Video gets this *and* CTPH, because they answer different questions — CTPH
 recognises a remux, frames recognise a re-encode, and neither sees what the
 other sees.
 
+Both tools are held to one thread. ffmpeg's default is one per core, and the
+fuzzy pass runs several workers each starting one — on a four-core NAS that
+is twelve decode threads competing for four cores to produce three single
+images. Thread startup cannot pay for itself on one frame, so the only thing
+that buys is contention, and a NAS has other work: the box this was measured
+on was at load 8.7 while also running two Plex transcodes and a full
+antivirus sweep.
+
 Which ffmpeg gets used is decided by what it can do, not by where it is.
 Package directories are searched before `PATH`, and each candidate is asked
 whether it can write a PNG to a pipe before it is accepted. On DSM that is

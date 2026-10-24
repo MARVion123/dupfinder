@@ -650,7 +650,7 @@ def video_probe(path: str):
 
     try:
         out = subprocess.run(
-            [ffprobe, "-v", "error", "-show_entries",
+            [ffprobe, "-v", "error", "-threads", "1", "-show_entries",
              "format=duration:format_tags=creation_time",
              "-of", "default=nw=1:nk=1", path],
             capture_output=True, timeout=30, check=False)
@@ -766,8 +766,17 @@ def video_dhash(path: str, duration: float | None = None) -> str | None:
         # which is the difference between a fifth of a second and minutes.
         try:
             out = subprocess.run(
-                [_FFMPEG, "-v", "error", "-ss", "%.3f" % (seconds * fraction),
+                # -threads 1 because this decodes exactly one frame.
+                # ffmpeg's default is one thread per core, and the fuzzy pass
+                # runs three of these at once - so on a four-core NAS that is
+                # twelve decode threads fighting over four cores, to produce
+                # three single images. Thread startup costs more than it can
+                # possibly save on one frame, and the contention is paid by
+                # everything else the box is doing.
+                [_FFMPEG, "-v", "error", "-threads", "1",
+                 "-ss", "%.3f" % (seconds * fraction),
                  "-i", path, "-frames:v", "1", "-vf", "scale=9:8",
+                 "-filter_threads", "1",
                  "-f", "image2pipe", "-vcodec", "png", "-"],
                 capture_output=True, timeout=60, check=False)
         except Exception:
