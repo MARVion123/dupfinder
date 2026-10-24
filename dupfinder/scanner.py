@@ -441,7 +441,7 @@ class ScanEngine:
         self._log_note("near-duplicate hashing across %d processes" % workers)
         return pool
 
-    def _run_jobs(self, pool, jobs):
+    def _run_jobs(self, pool, jobs, progress=None):
         """Hash a batch: partly on a helper machine if one is there, the rest here.
 
         Whatever a helper does not return in time is computed locally before
@@ -474,11 +474,16 @@ class ScanEngine:
                 checked = self._check_helper(pool, jobs, returned)
                 for index, value in checked.items():
                     results[index] = value
+                    # A helper's answer is a finished file like any other.
+                    # Counting only what we hashed ourselves would make the
+                    # bar crawl exactly when a helper is doing the most.
+                    if progress:
+                        progress(jobs[index][0])
                 mine = [i for i in mine if results[i] is None]
 
         if mine:
             batch = [jobs[i] for i in mine]
-            computed = self._run_locally(pool, batch)
+            computed = self._run_locally(pool, batch, progress)
             for index, value in zip(mine, computed):
                 results[index] = value
         return results
@@ -549,12 +554,32 @@ class ScanEngine:
             return max(1, count // 2)
         return count
 
-    def _run_locally(self, pool, jobs):
-        """Hash a batch here, in the pool when there is one."""
+    def _run_locally(self, pool, jobs, progress=None):
+        """Hash a batch here, in the pool when there is one.
+
+        `progress` is called with each path as its result arrives. Without it
+        this pass goes silent for a whole batch: `pool.map` is drained into a
+        list, so 256 files finish as one event. On images that is seconds and
+        nobody notices. On video each file is an ffprobe plus three ffmpeg
+        seeks, and the screen sat on one filename, with a motionless bar, for
+        half an hour - which reads as a hung scan rather than a working one.
+        """
         if pool is None:
-            return [_fuzzy_job(job) for job in jobs]
+            out = []
+            for job in jobs:
+                out.append(_fuzzy_job(job))
+                if progress:
+                    progress(job[0])
+            return out
         try:
-            return list(pool.map(_fuzzy_job, jobs, chunksize=4))
+            # map() yields in order as results arrive, so draining it by hand
+            # costs nothing and turns one event into one per file.
+            out = []
+            for job, result in zip(jobs, pool.map(_fuzzy_job, jobs, chunksize=4)):
+                out.append(result)
+                if progress:
+                    progress(job[0])
+            return out
         except Exception as exc:                        # noqa: BLE001
             # A broken pool must not lose the scan. Finish this batch here and
             # let the caller carry on; the pool is shut down by the finally.
@@ -1181,12 +1206,23 @@ class ScanEngine:
                     else:
                         done_now.append((row, fz, dh, None, None, tk))
 
-                if todo:
-                    self._set(current=todo[0][0]["path"])
+                # Cache hits are counted up front: they cost nothing and
+                # reporting them one by one would make the bar jump before
+                # any work has happened. The hashed ones are counted as they
+                # come back, which is what makes the bar move during a batch
+                # instead of once at the end of it.
+                if done_now:
+                    self._bump("done", len(done_now))
+
+                def arrived(path):
+                    self._set(current=path)
+                    self._bump("done")
+
                 results = self._run_jobs(
                     pool,
                     [(row["path"], row["size"], max_bytes, need_fz, need_dh)
-                     for row, _fz, _dh, need_fz, need_dh in todo])
+                     for row, _fz, _dh, need_fz, need_dh in todo],
+                    arrived)
 
                 computed = []
                 for (row, fz, dh, _nf, _nd), (fresh_fz, fresh_dh, fresh_tk) in zip(
@@ -1212,7 +1248,6 @@ class ScanEngine:
                         "name": row["name"], "ext": sys.intern(row["ext"] or ""),
                         "size": row["size"], "fuzzy": fz, "dhash": dh,
                     }
-                    self._bump("done")
                 if len(updates) >= BATCH:
                     self.db.executemany(
                         "UPDATE files SET fuzzy=?, dhash=?, "

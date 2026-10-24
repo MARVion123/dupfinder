@@ -148,6 +148,14 @@ the pool cannot start, and says so in the progress panel.
 (phase, current path, bytes hashed, cache reuse), can be **stopped at any
 moment** with partial results kept, and can be **run again**.
 
+"Live" is meant literally, and was not until build 0028. The near-duplicate
+pass hands 256 files to the pool and used to drain the result in one go, so
+the name and the counter were written once before the batch and once after
+it. On images that is seconds. On video — an ffprobe and three ffmpeg seeks
+per file — it was half an hour on one filename with a motionless bar, which
+is exactly what a hung scan looks like. Results are now collected as they
+arrive, and a file hashed by a helper machine counts like any other.
+
 **Pause, and carry on later — including after a restart.** *Pause* parks the
 scan instead of writing it off. A resume does not re-enter the phase it
 stopped in and does not need to: the file index is in `files` and every hash

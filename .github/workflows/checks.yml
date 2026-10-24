@@ -40,6 +40,9 @@ jobs:
       - name: Pausing a scan and carrying it on
         run: python3 tests/test_pause_resume.py
 
+      - name: What the near-duplicate pass reports while it runs
+        run: python3 tests/test_progress.py
+
       - name: A real scan, start to finish
         # The only test here that runs the whole chain. Adding a column once
         # widened an INSERT and left two other passes writing the old row;
