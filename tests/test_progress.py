@@ -141,6 +141,64 @@ def main() -> int:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    tmp = tempfile.mkdtemp(prefix="videomin-")
+    try:
+        print("")
+        print("a floor keeps short clips out of the frame analysis")
+        # Every video costs the same three ffmpeg seeks, film or clip -
+        # about nine seconds of CPU each on a NAS. At 98,000 videos that is
+        # 246 core-hours, and most of them are clips with nothing behind
+        # them. Without a floor there is no way to say so.
+        tree = os.path.join(tmp, "tree")
+        os.makedirs(tree)
+        big = os.path.join(tree, "film.mp4")
+        small = os.path.join(tree, "clip.mp4")
+        with open(big, "wb") as fh:
+            fh.write(os.urandom(2_000_000))
+        with open(small, "wb") as fh:
+            fh.write(os.urandom(50_000))
+
+        cfg = Config(os.path.join(tmp, "data"))
+        cfg.update({"roots_allowlist": [tmp], "video_min_size": 1_000_000})
+        db = Database(cfg.db_path)
+        eng = ScanEngine(db, cfg)
+        scan_id = eng.start(tree)
+        while eng.status()["state"] == "running":
+            time.sleep(0.05)
+
+        rows = db.query("SELECT id, path, name, ext, size, mtime FROM files "
+                        "WHERE scan_id=?", (scan_id,))
+
+        # The filter asks ffmpeg_available() first, and a developer machine
+        # or a CI runner usually has no ffmpeg - which switches the whole
+        # video branch off and would let this pass without testing anything.
+        from dupfinder import hashing as hashing_mod
+        real_available = hashing_mod.ffmpeg_available
+        hashing_mod.ffmpeg_available = lambda: True
+        try:
+            picked = eng._pick_fuzzy_candidates(
+                rows, set(), False, True, 0, 2_097_152)
+            wanted = {r["path"]: perceptual for r, perceptual, _c in picked}
+
+            check("the big one is offered to the frame analysis",
+                  wanted.get(big) is True, str(wanted.get(big)))
+            check("the short clip is not", not wanted.get(small),
+                  str(wanted.get(small)))
+
+            # And with the floor off, nothing is dropped - the default must not
+            # quietly shrink what gets compared.
+            cfg.update({"video_min_size": 0})
+            picked = eng._pick_fuzzy_candidates(
+                rows, set(), False, True, 0, 2_097_152)
+            wanted = {r["path"]: perceptual for r, perceptual, _c in picked}
+            check("with the floor at zero both come back",
+                  wanted.get(big) is True and wanted.get(small) is True,
+                  "%s / %s" % (wanted.get(big), wanted.get(small)))
+        finally:
+            hashing_mod.ffmpeg_available = real_available
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     print()
     if FAILURES:
         print("%d check(s) failed: %s" % (len(FAILURES), ", ".join(FAILURES)))

@@ -170,6 +170,18 @@ DEFAULTS = {
     # are missing. This is the only signal that survives a re-encode -
     # byte-level hashing scores the same film at two bitrates at zero.
     "video_similarity": True,
+    # Smallest video worth taking frames from. Every video costs the same
+    # three ffmpeg seeks whether it is a four-gigabyte film or a three-
+    # megabyte clip - measured on a loaded NAS, about three seconds of CPU
+    # per frame, so nine per file. At 98,486 videos that is 246 core-hours,
+    # and the great majority of them are short clips with almost no
+    # reclaimable space behind them.
+    #
+    # 0 keeps the old behaviour and hashes every video. It is the default
+    # because dropping files from a comparison without being asked is not a
+    # default worth having - but on a large library this is the one setting
+    # that decides whether the video pass finishes this week or this month.
+    "video_min_size": 0,
     # --- deletion ---
     # quarantine  -> move into <root>/.dupfinder-trash/<scan-id>/ (reversible)
     # recycle     -> move into the DSM share recycle bin (#recycle)

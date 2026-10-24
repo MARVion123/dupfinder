@@ -93,6 +93,17 @@ Video gets this *and* CTPH, because they answer different questions — CTPH
 recognises a remux, frames recognise a re-encode, and neither sees what the
 other sees.
 
+*Video: skip frame analysis below N MB* is the control that decides whether
+this pass finishes. Frame analysis costs the same three ffmpeg seeks whether
+the file is a four-gigabyte film or a three-megabyte clip — measured on a
+Synology NAS, about three seconds of CPU per frame, so nine per video. At
+98,486 videos that is 246 core-hours. Most of those are short clips with
+almost nothing to reclaim behind them. The default is 0, hashing every video,
+because dropping files from a comparison unasked is not a default worth
+having. Exact duplicates and the byte signature are unaffected: a short clip
+sitting on the disk twice is still found. What a floor gives up is the same
+*short* clip at two bitrates.
+
 Both tools are held to one thread. ffmpeg's default is one per core, and the
 fuzzy pass runs several workers each starting one — on a four-core NAS that
 is twelve decode threads competing for four cores to produce three single

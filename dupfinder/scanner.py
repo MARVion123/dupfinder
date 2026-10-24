@@ -1093,6 +1093,7 @@ class ScanEngine:
         """
         skip_exts = {str(e).lower() for e in self.config["fuzzy_skip_exts"]}
         ctph_min = max(0, int(self.config["ctph_min_size"]))
+        video_min = max(0, int(self.config["video_min_size"]))
         want_video = bool(self.config["video_similarity"])
         if want_video and not hashing.ffmpeg_available():
             # The one case worth interrupting the progress line for. Every
@@ -1109,7 +1110,8 @@ class ScanEngine:
                 continue
             ext = (row["ext"] or "").lower()
             is_image = want_images and ext in hashing.IMAGE_EXTS
-            is_video = want_video and ext in hashing.VIDEO_EXTS
+            is_video = (want_video and ext in hashing.VIDEO_EXTS
+                        and row["size"] >= video_min)
             # Video gets both signals, because they answer different questions:
             # CTPH recognises the same file remuxed, frame hashes recognise the
             # same film re-encoded, and neither sees what the other sees.

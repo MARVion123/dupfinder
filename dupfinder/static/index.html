@@ -261,6 +261,15 @@
         nothing else. Run this on it:
         <code>python3 -m dupfinder helper --server http://&lt;nas&gt;:8777</code></span>
       </label>
+      <label>Video: skip frame analysis below
+        <span class="unit"><input id="setVideoMinMB" type="number" min="0" max="1048576" step="1"> MB</span>
+        <span class="hint">0 = every video, however short. Frame analysis is the
+        only thing that recognises the same film re-encoded, and it costs the same
+        three ffmpeg seeks whether the file is four gigabytes or three megabytes —
+        measured on this NAS, about nine seconds of CPU per video. At 98,000 videos
+        that is 246 core-hours, and most of them are short clips with almost
+        nothing to reclaim behind them.</span>
+      </label>
       <label>Near-duplicates: skip the byte hash below
         <span class="unit"><input id="setCtphMinMB" type="number" min="0" max="1048576" step="1"> MB</span>
         <span class="hint">0 = no limit, and on a large library this is the most
