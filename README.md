@@ -623,7 +623,7 @@ The defaults that matter:
 | `dry_run` | `false` | Rehearsal mode. Every check runs and the log fills up, but no file is touched. Toggled from the action bar with *Simulate only*, and it sticks. |
 | `ai_model` | `claude-opus-5` | |
 | `ai_effort` | `high` | `low` … `max`. |
-| `anthropic_api_key` | *empty* | Falls back to `ANTHROPIC_API_KEY`. Never sent to the browser. |
+| `anthropic_api_key` | *empty* | Falls back to `ANTHROPIC_API_KEY`. Never sent to the browser, and `config.json` is written mode 0600 because this and `auth_token` sit in it in clear text. |
 
 ### Security
 

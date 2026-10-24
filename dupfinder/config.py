@@ -229,10 +229,25 @@ class Config:
             pass
 
     def save(self) -> None:
+        """Write the config, readable only by the account that runs the service.
+
+        It holds the Anthropic API key and the auth token in clear text. A
+        NAS is a shared machine - other packages, other accounts, a home
+        directory somebody syncs - and the default mode here is whatever the
+        umask says, usually 0644. The permissions are set on the temporary
+        file before it is moved into place, so the key is never readable
+        even for the instant between creating the file and tightening it.
+        """
         with _LOCK:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(self._values, fh, indent=2, sort_keys=True)
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                # Windows, or a filesystem with no permission bits. The
+                # config is still written; it is simply not protected here.
+                pass
             os.replace(tmp, self.path)
 
     # -- access --------------------------------------------------------
