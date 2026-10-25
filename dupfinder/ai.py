@@ -321,6 +321,36 @@ class AIEngine:
                     "with: %s -m pip install anthropic"
                     % (sys.executable or "this interpreter",
                        sys.executable or "python3")}
+        # Importing it is not the same as having it, and the way this fails
+        # is genuinely confusing. If the package directory cannot be read -
+        # pip run as root leaves it mode 700 root:root, and the service runs
+        # as the package user - then Python still sees the directory entry,
+        # fails to find __init__.py inside it, and imports it as a *namespace
+        # package*: the import succeeds, __file__ is None, and not one name
+        # is there. Until this check existed, availability() said ready and
+        # the first request died with AttributeError.
+        #
+        # So say which of the two it is. __file__ is None for the unreadable
+        # case and a real path for a genuinely wrong module, and the fix is
+        # completely different either way - one is chmod, the other pip.
+        if not hasattr(anthropic, "Anthropic"):
+            where = getattr(anthropic, "__file__", None)
+            if where:
+                fix = ("The 'anthropic' module at %s has no Anthropic class, so "
+                       "it is not the SDK. Reinstall with: %s -m pip install "
+                       "--force-reinstall anthropic" % (where, sys.executable
+                                                        or "python3"))
+            else:
+                paths = list(getattr(anthropic, "__path__", None) or [])
+                fix = ("'anthropic' was found at %s but could not be read, so "
+                       "Python imported an empty namespace package. This is a "
+                       "permission problem, not a missing install: the service "
+                       "runs as its own user and pip was probably run as root. "
+                       "Fix it with: chmod -R a+rX %s"
+                       % (paths[0] if paths else "an unknown path",
+                          os.path.dirname(os.path.dirname(sys.executable))
+                          if sys.executable else "<the venv>"))
+            return {"ok": False, "reason": fix}
         if not self.config.api_key():
             return {"ok": False, "reason": "No Anthropic API key configured. Set it in "
                                            "Settings or export ANTHROPIC_API_KEY."}

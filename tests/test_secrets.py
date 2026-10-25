@@ -129,6 +129,71 @@ def main() -> int:
 
         check("with neither, it reports no key", not cfg.api_key(),
               repr(cfg.api_key()))
+
+        print("")
+        print("a broken SDK is reported as broken, not as ready")
+        # An empty `anthropic` directory on the path imports fine as a
+        # namespace package and carries none of the names. availability()
+        # only tried the import, so it answered ok - and the first request
+        # died with "module 'anthropic' has no attribute 'Anthropic'" after
+        # the user had already gone and made an API key.
+        import types
+        from dupfinder.ai import AIEngine
+
+        cfg.update({"anthropic_api_key": KEY, "ai_enabled": True})
+        engine = AIEngine(None, cfg)
+
+        hollow = types.ModuleType("anthropic")
+        hollow.__file__ = "/somewhere/anthropic/__init__.py"
+        real = sys.modules.get("anthropic")
+        sys.modules["anthropic"] = hollow
+        try:
+            verdict = engine.availability()
+            check("it is not called ready", verdict["ok"] is False,
+                  str(verdict))
+            check("and the reason says what is wrong",
+                  "no Anthropic class" in verdict["reason"],
+                  verdict["reason"])
+            check("and names where the module was found",
+                  "/somewhere/anthropic" in verdict["reason"],
+                  verdict["reason"])
+            check("a real path points at pip, not at permissions",
+                  "pip install" in verdict["reason"]
+                  and "chmod" not in verdict["reason"],
+                  verdict["reason"])
+
+            # The case that actually happened: the package is installed and
+            # complete, but mode 700 root:root, so the service user cannot
+            # read it. Python then imports the directory as a namespace
+            # package - __file__ is None and nothing is in it. Telling
+            # somebody to reinstall here is wrong and destructive: the
+            # install is fine, the permissions are not.
+            del hollow.__file__
+            hollow.__path__ = ["/venv/lib/python3.11/site-packages/anthropic"]
+            verdict = engine.availability()
+            check("an unreadable package is not called ready",
+                  verdict["ok"] is False, str(verdict))
+            check("and is named a permission problem",
+                  "permission" in verdict["reason"].lower(), verdict["reason"])
+            check("with chmod, not a reinstall",
+                  "chmod" in verdict["reason"]
+                  and "pip install" not in verdict["reason"],
+                  verdict["reason"])
+            check("and it names the directory it could not read",
+                  "site-packages/anthropic" in verdict["reason"],
+                  verdict["reason"])
+            hollow.__file__ = "/somewhere/anthropic/__init__.py"
+
+            # And the opposite: a module that does carry the class passes.
+            hollow.Anthropic = object
+            verdict = engine.availability()
+            check("a module with the class is accepted",
+                  verdict["ok"] is True, str(verdict))
+        finally:
+            if real is None:
+                sys.modules.pop("anthropic", None)
+            else:
+                sys.modules["anthropic"] = real
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -650,8 +650,19 @@ read.
 
 ```sh
 python3 -m pip install anthropic          # the official SDK, and pydantic with it
+chmod -R a+rX /path/to/the/venv           # if pip ran as root; see below
 export ANTHROPIC_API_KEY=sk-ant-...       # or paste it into Settings
 ```
+
+That `chmod` is not boilerplate. The service runs as its own package user,
+and pip run as root leaves the package mode 700 root:root. Python then sees
+the directory, cannot read `__init__.py` inside it, and imports it as a
+*namespace package*: the import succeeds, `__file__` is None, and not one
+name is there. The first request dies with `module 'anthropic' has no
+attribute 'Anthropic'` about an installation that is complete and correct.
+Availability says which of the two it is — a real `__file__` means the wrong
+module and calls for pip, `None` means unreadable and calls for chmod — so
+that nobody reinstalls over a package that was never broken.
 
 Declared as an extra rather than a dependency: `pip install .[ai]`, or
 `.[full]` for this and Pillow together. It stays optional on purpose. The SDK
