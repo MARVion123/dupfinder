@@ -852,6 +852,14 @@ pulling the tables out from under it.
 
 ---
 
+## If it saved you an afternoon
+
+One person wrote this and gave it away. There is nothing to buy, no account,
+no telemetry — but there is a tip jar:
+**[buymeacoffee.com/marvion](https://buymeacoffee.com/marvion)**.
+
+---
+
 ## License
 
 **PolyForm Noncommercial 1.0.0** — see [LICENSE](LICENSE).

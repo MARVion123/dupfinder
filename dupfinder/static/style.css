@@ -391,3 +391,8 @@ tr.folder-pair.kin td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   gap: 16px; flex-wrap: wrap; border-color: var(--accent); }
 .resumebar .muted { display: block; margin-top: 4px; font-size: 12.5px; line-height: 1.45; }
 .resumebar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* The tip jar in the settings dialog. Quiet on purpose: it sits under the
+   settings somebody opened for another reason, and asking for money should
+   never be the loudest thing on a screen they came to configure. */
+.tipjar { font-size: 12px; margin-top: 6px; }

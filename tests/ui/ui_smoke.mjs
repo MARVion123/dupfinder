@@ -281,6 +281,27 @@ async function run() {
       `colour differs: ${marking.colour}, underline differs: ${marking.underline}`);
 
     // Page size: 100 rows was fixed, with no way to ask for more or less.
+    // The tip jar lives in the settings dialog. It is the one link in the
+    // app that leaves the NAS, so it must not be a dead end or a plain
+    // navigation that loses the open scan.
+    await page.click("#btnSettings");
+    await page.waitForSelector("#modalSettings:not(.hidden)");
+    const jar = await page.evaluate(() => {
+      const a = document.querySelector(".tipjar a");
+      if (!a) return null;
+      return { href: a.getAttribute("href"), target: a.getAttribute("target"),
+               rel: a.getAttribute("rel") || "", text: a.textContent.trim() };
+    });
+    step("the settings dialog carries the tip jar", jar !== null);
+    step("and it points at the right place",
+      jar && jar.href === "https://buymeacoffee.com/marvion", jar && jar.href);
+    step("it opens away from the app, not over the running scan",
+      jar && jar.target === "_blank", jar && jar.target);
+    step("and the new tab cannot reach back into the page",
+      jar && jar.rel.includes("noopener"), jar && jar.rel);
+    await page.click("#modalSettings [data-close]");
+    await page.waitForSelector("#modalSettings.hidden", { state: "attached" });
+
     step("the page size picker is there",
       await page.locator("#pageSize").count() === 1);
     step("and starts at the default",

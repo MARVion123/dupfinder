@@ -372,6 +372,9 @@
   footer { border-top: 1px solid var(--rule); padding: 40px 0 64px; }
   footer .wrap { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
   footer p { margin: 0; color: var(--muted); font-size: .86rem; max-width: 52ch; }
+  /* Both paragraphs are one flex child, so the colophon stays where it
+     was: space-between across three items would have pulled them apart. */
+  .footnote { display: grid; gap: 10px; }
   .colophon { font-family: var(--mono); font-size: .7rem; letter-spacing: .1em;
               text-transform: uppercase; color: var(--muted); }
 
@@ -1400,11 +1403,17 @@ ExecStart=<b>/volume1/apps/venv/bin/python</b> -m dupfinder serve --port 8777</p
 
 <footer>
   <div class="wrap">
-    <p>
-      Provided as is, without warranty. The first scan belongs on a folder whose
-      loss would not hurt — and do try one delete and one restore before real
-      data is involved.
-    </p>
+    <div class="footnote">
+      <p>
+        Provided as is, without warranty. The first scan belongs on a folder whose
+        loss would not hurt — and do try one delete and one restore before real
+        data is involved.
+      </p>
+      <p>
+        Written by one person and given away. If it handed you back an afternoon,
+        you can <a href="https://buymeacoffee.com/marvion" rel="noopener">buy me a coffee</a>.
+      </p>
+    </div>
     <div class="colophon">Dupfinder · Data sheet · v1.0.0 · PolyForm Noncommercial 1.0.0</div>
   </div>
 </footer>
